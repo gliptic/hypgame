@@ -1,0 +1,14 @@
+[workspace]
+
+members = [
+    "rustweb",
+    "rustweb-macro",
+    "rustweb-code",
+    "rustweb-bundler"
+]
+
+[profile.release]
+debug = true
+lto = true
+panic = 'abort'
+opt-level = 'z'

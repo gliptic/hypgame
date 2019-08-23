@@ -1,0 +1,5 @@
+.vscode
+target
+*.wasm
+Cargo.lock
+*.jar

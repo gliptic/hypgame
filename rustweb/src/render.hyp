@@ -1,0 +1,336 @@
+use vecmath
+use vertex_glsl
+
+pub let gl
+pub let w
+pub let h
+pub let viewTrans
+
+pub let GL_VERTEX_SHADER = 0x8B31
+pub let GL_FRAGMENT_SHADER = 0x8B30
+pub let GL_ELEMENT_ARRAY_BUFFER = 0x8893
+pub let GL_ARRAY_BUFFER = 0x8892
+pub let GL_TEXTURE0 = 0x84C0
+
+pub let GL_SRC_ALPHA =           0x0302
+pub let GL_ONE_MINUS_SRC_ALPHA = 0x0303
+pub let GL_DST_ALPHA =           0x0304
+pub let GL_ONE_MINUS_DST_ALPHA = 0x0305
+pub let GL_DST_COLOR =           0x0306
+pub let GL_ONE_MINUS_DST_COLOR = 0x0307
+pub let GL_BLEND = 0x0BE2
+pub let GL_RGBA = 0x1908
+pub let GL_LUMINANCE = 0x1909
+
+pub let GL_TRIANGLES = 0x0004
+pub let GL_TRIANGLE_STRIP = 0x0005
+pub let GL_UNSIGNED_BYTE = 0x1401
+pub let GL_UNSIGNED_SHORT = 0x1403
+pub let GL_FLOAT = 0x1406
+pub let GL_STATIC_DRAW = 0x88E4
+pub let GL_DYNAMIC_DRAW = 0x88E8
+pub let GL_COMPILE_STATUS = 0x8B81
+pub let GL_LINK_STATUS = 0x8B82
+pub let GL_TEXTURE_2D = 0x0DE1
+pub let GL_TEXTURE_WRAP_S = 0x2802
+pub let GL_TEXTURE_WRAP_T = 0x2803
+pub let GL_TEXTURE_MAG_FILTER = 0x2800
+pub let GL_TEXTURE_MIN_FILTER = 0x2801
+pub let GL_NEAREST = 0x2600
+pub let GL_LINEAR = 0x2601
+pub let GL_CLAMP_TO_EDGE = 0x812F
+pub let GL_COLOR_BUFFER_BIT = 0x00004000
+
+pub let basicVs = vertex_glsl.main #TODO: glsl.vertex
+
+let wasm_memory = wasm.memory.buffer
+let wasm_U8 = Uint8Array.new(wasm_memory)
+let wasm_U32 = Uint32Array.new(wasm_memory)
+let VERTEX_SIZE = (4 * 2) + (4 * 2) + (4)
+let MAX_BATCH = 10922
+let MAX_STACK = 100
+let MAT_SIZE = 6
+let VERTICES_PER_QUAD = 6
+let QUAD_SIZE_IN_WORDS = (VERTEX_SIZE * VERTICES_PER_QUAD) / 4
+let VERTEX_DATA_SIZE = VERTEX_SIZE * MAX_BATCH * 6
+
+let VBO
+let count = 0
+let currentTexture
+let vertexData = ArrayBuffer.new(VERTEX_DATA_SIZE)
+let vPositionData = Float32Array.new(vertexData)
+let vColorData = Uint32Array.new(vertexData)
+let mat0 = 1
+let mat1 = 0
+let mat2 = 0
+let mat3 = 1
+let mat4 = 0
+let mat5 = 0
+let stack = []
+let locPos = 0
+let locUV = 1
+let locColor = 2
+let col = 0xffffffff
+
+fn initGl(canvas) {
+    gl := canvas.getContext("webgl")
+    w := canvas.width
+    h := canvas.height
+    gl.clearColor(0.0, 0.2, 0.0, 1.0)
+}
+
+pub fn createBuffer(bufferType, size, usage) {
+    let buffer = gl.createBuffer()
+    gl.bindBuffer(bufferType, buffer)
+    gl.bufferData(bufferType, size, usage)
+    return buffer
+}
+
+pub fn createTexture(image, side, ty) {
+    let texture = gl.createTexture()
+    gl.bindTexture(GL_TEXTURE_2D, texture)
+    gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+    gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    gl.texImage2D(GL_TEXTURE_2D, 0, ty, side, side, 0, ty, GL_UNSIGNED_BYTE, Uint8Array.new(image.buffer))
+    console.log("texImage")
+    return texture
+}
+
+pub fn setViewTransform(shader) {
+    gl.uniformMatrix3fv(gl.getUniformLocation(shader, "m"), 0, viewTrans)
+}
+
+pub fn color(c) {
+    col := c
+}
+
+pub fn setView(x, y, rotx, roty, zoom) {
+    let ratio = h / w
+
+    viewTrans := [
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1
+    ]
+
+    vecmath.scale(viewTrans, 2 / (1024 * zoom), 2 / (1024 * zoom * ratio))
+    vecmath.rotvec(viewTrans, rotx, roty)
+    vecmath.trans(viewTrans, -x, -y)
+}
+
+pub fn flush_buf(buf_p, cou) {
+    gl.bufferSubData(GL_ARRAY_BUFFER, 0, wasm_U8.subarray(buf_p, buf_p + cou * 5 * 4))
+    gl.drawArrays(GL_TRIANGLES, 0, cou)
+}
+
+pub fn flush() {
+    if (count) {
+        gl.bufferSubData(GL_ARRAY_BUFFER, 0, vPositionData.buffer.subarray(0, count * QUAD_SIZE_IN_WORDS))
+        gl.drawArrays(GL_TRIANGLES, 0, count * VERTICES_PER_QUAD)
+        count := 0
+    }
+    currentTexture := null
+}
+
+pub fn img(texture, x, y, w_, h_, u0, v0, u1, v1) {
+    let x0 = x
+    let y0 = y
+    let x1 = x + w_
+    let y1 = y + h_
+    let x2 = x
+    let y2 = y + h_
+    let x3 = x + w_
+    let y3 = y
+    let offset = 0
+    let argb = col
+
+    if texture != currentTexture || count + 1 >= MAX_BATCH {
+        flush()
+        if currentTexture != texture {
+            currentTexture := texture
+            gl.bindTexture(GL_TEXTURE_2D, currentTexture)
+        }
+    }
+
+    offset := count * QUAD_SIZE_IN_WORDS - 1
+    # Vertex Order
+    # Vertex Position | UV | ARGB
+    # Vertex 1
+    vPositionData[offset += 1] := x0 * mat0 + y0 * mat2 + mat4
+    vPositionData[offset += 1] := x0 * mat1 + y0 * mat3 + mat5
+    vPositionData[offset += 1] := u0
+    vPositionData[offset += 1] := v0
+    vColorData[offset += 1] := argb
+
+    # Vertex 4
+    vPositionData[offset += 1] := x3 * mat0 + y3 * mat2 + mat4
+    vPositionData[offset += 1] := x3 * mat1 + y3 * mat3 + mat5
+    vPositionData[offset += 1] := u1
+    vPositionData[offset += 1] := v0
+    vColorData[offset += 1] := argb
+    
+    # Vertex 2
+    vPositionData[offset += 1] := x1 * mat0 + y1 * mat2 + mat4
+    vPositionData[offset += 1] := x1 * mat1 + y1 * mat3 + mat5
+    vPositionData[offset += 1] := u1
+    vPositionData[offset += 1] := v1
+    vColorData[offset += 1] := argb
+
+    # Vertex 1
+    vPositionData[offset += 1] := x0 * mat0 + y0 * mat2 + mat4
+    vPositionData[offset += 1] := x0 * mat1 + y0 * mat3 + mat5
+    vPositionData[offset += 1] := u0
+    vPositionData[offset += 1] := v0
+    vColorData[offset += 1] := argb
+
+    # Vertex 2
+    vPositionData[offset += 1] := x1 * mat0 + y1 * mat2 + mat4
+    vPositionData[offset += 1] := x1 * mat1 + y1 * mat3 + mat5
+    vPositionData[offset += 1] := u1
+    vPositionData[offset += 1] := v1
+    vColorData[offset += 1] := argb
+    
+    # Vertex 3
+    vPositionData[offset += 1] := x2 * mat0 + y2 * mat2 + mat4
+    vPositionData[offset += 1] := x2 * mat1 + y2 * mat3 + mat5
+    vPositionData[offset += 1] := u0
+    vPositionData[offset += 1] := v1
+    vColorData[offset += 1] := argb
+    
+    if (count += 1) >= MAX_BATCH {
+        flush()
+    }
+}
+
+pub fn img_simple(x, y, argb) {
+    let x0 = x
+    let y0 = y
+    let x1 = x + 25
+    let y1 = y + 25
+    let x2 = x
+    let y2 = y + 25
+    let x3 = x + 25
+    let y3 = y
+    let offset = 0
+    let u0 = 0
+    let v0 = 0
+    let u1 = 1
+    let v1 = 1
+
+    offset := count * QUAD_SIZE_IN_WORDS - 1
+    # Vertex Order
+    # Vertex Position | UV | ARGB
+    # Vertex 1
+    vPositionData[offset += 1] := x0
+    vPositionData[offset += 1] := y0
+    vPositionData[offset += 1] := u0
+    vPositionData[offset += 1] := v0
+    vColorData[offset += 1] := argb
+
+    # Vertex 4
+    vPositionData[offset += 1] := x3
+    vPositionData[offset += 1] := y3
+    vPositionData[offset += 1] := u1
+    vPositionData[offset += 1] := v0
+    vColorData[offset += 1] := argb
+    
+    # Vertex 2
+    vPositionData[offset += 1] := x1
+    vPositionData[offset += 1] := y1
+    vPositionData[offset += 1] := u1
+    vPositionData[offset += 1] := v1
+    vColorData[offset += 1] := argb
+
+    # Vertex 1
+    vPositionData[offset += 1] := x0
+    vPositionData[offset += 1] := y0
+    vPositionData[offset += 1] := u0
+    vPositionData[offset += 1] := v0
+    vColorData[offset += 1] := argb
+
+    # Vertex 2
+    vPositionData[offset += 1] := x1
+    vPositionData[offset += 1] := y1
+    vPositionData[offset += 1] := u1
+    vPositionData[offset += 1] := v1
+    vColorData[offset += 1] := argb
+    
+    # Vertex 3
+    vPositionData[offset += 1] := x2
+    vPositionData[offset += 1] := x2
+    vPositionData[offset += 1] := u0
+    vPositionData[offset += 1] := v1
+    vColorData[offset += 1] := argb
+
+    if (count += 1) >= MAX_BATCH {
+        flush()
+    }
+}
+
+pub fn activateShader(shader) {
+    gl.useProgram(shader)
+    setViewTransform(shader)
+}
+
+pub fn compileShader(source, ty) {
+    let shader = gl.createShader(ty)
+    gl.shaderSource(shader, "#extension GL_OES_standard_derivatives:enable\nprecision lowp float;" + source)
+    gl.compileShader(shader)
+
+    if (!gl.getShaderParameter(shader, GL_COMPILE_STATUS)) {
+        #console.log(`Error compiling ${ty === GL_VERTEX_SHADER ? "vertex" : "fragment"} shader:`)
+        console.log(gl.getShaderInfoLog(shader))
+    }
+    return shader
+}
+
+pub fn bindAttribLocations(shader) {
+    ["a", "b", "c"].map({ |name, i| gl.bindAttribLocation(shader, i, name) })
+}
+
+pub fn createShaderProgram(vsSource, fsSource) {
+    let program = gl.createProgram()
+    let vShader = compileShader(vsSource, GL_VERTEX_SHADER)
+    let fShader = compileShader(fsSource, GL_FRAGMENT_SHADER)
+    gl.attachShader(program, vShader)
+    gl.attachShader(program, fShader)
+    gl.linkProgram(program)
+
+    if (!gl.getProgramParameter(program, GL_LINK_STATUS)) {
+        console.log("Error linking shader program:")
+        console.log(gl.getProgramInfoLog(program))
+    }
+
+    bindAttribLocations(program)
+    return program
+}
+
+pub fn checkErr(v) {
+    let err = gl.getError()
+    if err != 0 {
+        console.log("error:", err)
+        console.trace()
+    }
+    return v
+}
+
+pub fn init(canvas) {
+    initGl(canvas)
+    gl.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    gl.enable(GL_BLEND)
+
+    gl.getExtension("OES_standard_derivatives")
+    
+    VBO := createBuffer(GL_ARRAY_BUFFER, VERTEX_DATA_SIZE, GL_DYNAMIC_DRAW)
+    gl.bindBuffer(GL_ARRAY_BUFFER, VBO)
+    
+    gl.enableVertexAttribArray(locPos)
+    gl.enableVertexAttribArray(locUV)
+    gl.enableVertexAttribArray(locColor)
+    gl.vertexAttribPointer(locPos, 2, GL_FLOAT, 0, VERTEX_SIZE, 0)
+    gl.vertexAttribPointer(locUV, 2, GL_FLOAT, 0, VERTEX_SIZE, 8)
+    gl.vertexAttribPointer(locColor, 4, GL_UNSIGNED_BYTE, 1, VERTEX_SIZE, 16)
+    
+    gl.activeTexture(GL_TEXTURE0)
+}

@@ -1,0 +1,31 @@
+use game_js
+use render
+
+fn foo(i: u32) {
+    let v = Vec(0, 1)
+    var v2 = Vec(1, 2)
+    let s = "abc"
+    v.x := (v.x * 2 + 1) * 2
+    v.x += 1
+    console.log(Math.sin(v[0]))
+
+    let arr = [1, 2, 3]
+
+    if v == 0 {
+    } else if x {
+    } else {
+    }
+
+    window.onkeydown := { |e|
+        console.log(e)
+    }
+
+    while v == 0 {
+        game_js.game_thing()
+    }
+
+    loop {
+    }
+
+    return v
+}

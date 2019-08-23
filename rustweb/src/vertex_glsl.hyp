@@ -1,0 +1,16 @@
+@language(glsl)
+
+@attribute pub let a: vec2
+@attribute pub let b: vec2
+@attribute pub let c: vec4
+@varying pub let d: vec2
+@varying pub let f: vec2
+@varying pub let e: vec4
+@uniform pub let m: mat3
+
+pub fn main() {
+    d := b
+    e := c
+    f := a
+    gl_Position := vec4(m*vec3(a, 1.0), 1.0)
+}

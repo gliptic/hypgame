@@ -1,0 +1,683 @@
+use serde::{Serialize, Deserialize};
+use syn::{Item, Visibility, Expr, Stmt};
+use std::collections::{HashMap, hash_map};
+
+type Id = u32;
+type TypedAst = (GlslAst, GlslType);
+
+#[derive(Clone, Debug)]
+pub enum GlslLocal {
+    //ModuleRef(u32),
+    //ModuleMember(u32, String),
+    //SelfMember(u32),
+    Local(u32)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum GlslLit {
+    Int(u64),
+    //Str(String),
+    Float(f64)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum GlslAst {
+    //Item,
+    Undef,
+    Fn { id: Id, exported: bool, arg_names: Vec<String>, expr: Box<GlslAst> },
+    Lit { lit: GlslLit },
+    Block { stmts: Vec<GlslAst> },
+    Locals { locs: Vec<(String, GlslAst, Id)> },
+    LocalRef { id: Id },
+    Path { segments: Vec<String> },
+    Assign { left: Box<GlslAst>, right: Box<GlslAst> },
+    Field { base: Box<GlslAst>, member: String },
+    Return { value: Box<GlslAst> },
+    Unary { value: Box<GlslAst>, op: GlslUnop },
+    Binary { left: Box<GlslAst>, op: GlslOp, right: Box<GlslAst> },
+    Call { func: Box<GlslAst>, args: Vec<GlslAst> }, // TODO: Record overload?
+    If { cond: Box<GlslAst>, then_branch: Vec<GlslAst>, else_branch: Option<Box<GlslAst>> },
+    While { cond: Box<GlslAst>, body: Vec<GlslAst> },
+    Loop { body: Vec<GlslAst> },
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub enum GlslType {
+    Unknown,
+    Void,
+    Int,
+    Float,
+    Vec(u32),
+    Mat(u32, u32),
+    Sampler2D,
+    Fn { ret: Box<GlslType>, args: Vec<GlslType> }
+}
+
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
+pub enum GlslOp {
+    Mul,
+    Add,
+    Sub,
+    Div,
+    Rem,
+    MulEq,
+    AddEq,
+    SubEq,
+    DivEq,
+    RemEq,
+    //BitOr,
+    //BitAnd,
+    //BitXor,
+    AndAnd,
+    OrOr,
+    //Shl,
+    //Shr,
+    Eq,
+    Lt,
+    Le,
+    Ne,
+    Gt,
+    Ge,
+}
+
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
+pub enum GlslUnop {
+    Plus,
+    Minus,
+    Not,
+    PreInc,
+    PreDec,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum GlslGlobal {
+    Varying(u32),
+    Uniform(u32),
+    Attribute(u32)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GlslModule {
+    pub name: String,
+    pub items: Vec<GlslAst>,
+    pub locals: Vec<(GlslType, String)>,
+    pub exports: Vec<u32>, // Referenced to locals
+    //pub globals: Vec<GlslGlobal>
+    pub attributes: Vec<Id>,
+    pub varyings: Vec<Id>,
+    pub uniforms: Vec<Id>,
+}
+
+pub struct GlslEnc {
+    pub module: GlslModule,
+    pub arr: Vec<u8>,
+    pub scope_locals: HashMap<String, GlslLocal>,
+    pub scope_local_list: Vec<String>,
+}
+
+impl GlslEnc {
+    pub fn new(name: String) -> GlslEnc {
+        GlslEnc {
+            scope_locals: HashMap::new(),
+            scope_local_list: Vec::new(),
+            module: GlslModule {
+                name,
+                items: Vec::new(),
+                locals: Vec::new(),
+                exports: Vec::new(),
+                varyings: Vec::new(),
+                attributes: Vec::new(),
+                uniforms: Vec::new(),
+            },
+            arr: Vec::new()
+        }
+    }
+
+    pub fn begin_scope(&mut self) -> usize {
+        self.scope_local_list.len()
+    }
+
+    pub fn new_local(&mut self, name: String, ty: GlslType) -> u32 {
+        let index = self.module.locals.len();
+        self.module.locals.push((ty, name));
+        index as u32
+    }
+
+    pub fn find_local(&mut self, name: &str) -> Option<GlslLocal> {
+        self.scope_locals.get(name).map(|v| v.clone())
+    }
+
+    pub fn local_to_ast(&self, local: GlslLocal) -> TypedAst {
+        match local {
+            //JsLocal::ModuleRef(module) => JsAst::Path { path: vec![self.module.imports[module as usize].clone()] },
+            //GlslLocal::ModuleRef(module) => JsAst::ModuleRef { module },
+            //GlslLocal::ModuleMember(module, member) => JsAst::ModuleMember { module, member },
+            //JsLocal::SelfMember(index) => JsAst::SelfMember { index },
+            GlslLocal::Local(index) => {
+                (GlslAst::LocalRef { id: index }, self.module.locals[index as usize].0.clone())
+            },
+        }
+    }
+
+    pub fn add_local(&mut self, name: String, local: GlslLocal) {
+        // TODO: Ugh, get rid of .clone()
+        match self.scope_locals.entry(name.clone()) {
+            hash_map::Entry::Occupied(_) => panic!("it's not allowed to shadow the name {}", &name),
+            hash_map::Entry::Vacant(v) => {
+                v.insert(local);
+            },
+        }
+
+        self.scope_local_list.push(name);
+    }
+
+    pub fn end_scope(&mut self, local_count: usize) {
+        while self.scope_local_list.len() > local_count {
+            let name = self.scope_local_list.pop().unwrap();
+            self.scope_locals.remove(&name);
+        }
+    }
+
+    pub fn map_unop(&self, op: &syn::UnOp) -> GlslUnop {
+        match op {
+            syn::UnOp::Neg(_) => GlslUnop::Minus,
+            syn::UnOp::Not(_) => GlslUnop::Not,
+            _ => panic!("unimplemented unary op {:?}", op)
+        }
+    }
+
+    pub fn map_binop(&self, op: &syn::BinOp) -> GlslOp {
+        match op {
+            syn::BinOp::Mul(_) => GlslOp::Mul,
+            syn::BinOp::Div(_) => GlslOp::Div,
+            syn::BinOp::Add(_) => GlslOp::Add,
+            syn::BinOp::Sub(_) => GlslOp::Sub,
+            syn::BinOp::Rem(_) => GlslOp::Rem,
+            syn::BinOp::MulEq(_) => GlslOp::MulEq,
+            syn::BinOp::DivEq(_) => GlslOp::DivEq,
+            syn::BinOp::AddEq(_) => GlslOp::AddEq,
+            syn::BinOp::SubEq(_) => GlslOp::SubEq,
+            syn::BinOp::RemEq(_) => GlslOp::RemEq,
+            //syn::BinOp::BitOr(_) => GlslOp::BitOr,
+            //syn::BinOp::BitAnd(_) => GlslOp::BitAnd,
+            //syn::BinOp::BitXor(_) => GlslOp::BitXor,
+            syn::BinOp::And(_) => GlslOp::AndAnd,
+            syn::BinOp::Or(_) => GlslOp::OrOr,
+            //syn::BinOp::Shl(_) => GlslOp::Shl,
+            //syn::BinOp::Shr(_) => GlslOp::Shr,
+            syn::BinOp::Eq(_) => GlslOp::Eq,
+            syn::BinOp::Lt(_) => GlslOp::Lt,
+            syn::BinOp::Le(_) => GlslOp::Le,
+            syn::BinOp::Ne(_) => GlslOp::Ne,
+            syn::BinOp::Gt(_) => GlslOp::Gt,
+            syn::BinOp::Ge(_) => GlslOp::Ge,
+            _ => panic!("unimplemented binary op {:?}", op)
+        }
+    }
+
+    fn get_return_type(&self, ty: &GlslType) -> GlslType {
+        match ty {
+            GlslType::Fn { ret, .. } => ret.as_ref().clone(),
+            GlslType::Unknown => GlslType::Unknown, // Could be anything
+            _ => panic!("non-function type does not have a return type")
+        }
+    }
+
+    pub fn check_assignable(&self, expr: &GlslAst) {
+        /* TODO: With types too
+        match expr {
+            GlslAst::Global { constant: true, .. } =>
+                panic!("cannot assign to global"),
+            _ => {}
+        }*/
+    }
+
+    fn parse_type(&self, ty: &syn::Type) -> GlslType {
+        match ty {
+            syn::Type::Path(syn::TypePath { path, .. })
+                if path.segments.len() == 1 => {
+                
+                let first = path.segments.iter().nth(0).unwrap();
+                let s = first.ident.to_string();
+
+                match s.as_str() {
+                    "float" => GlslType::Float,
+                    "int" => GlslType::Int,
+                    "vec2" => GlslType::Vec(2),
+                    "vec3" => GlslType::Vec(2),
+                    "vec4" => GlslType::Vec(4),
+                    "mat2" | "mat2x2" => GlslType::Mat(2, 2),
+                    "mat2x3" => GlslType::Mat(2, 3),
+                    "mat2x4" => GlslType::Mat(2, 4),
+                    "mat3x2" => GlslType::Mat(3, 2),
+                    "mat3" | "mat3x3" => GlslType::Mat(3, 3),
+                    "mat3x4" => GlslType::Mat(3, 4),
+                    "mat4x2" => GlslType::Mat(4, 2),
+                    "mat4x3" => GlslType::Mat(4, 3),
+                    "mat4" | "mat4x4" => GlslType::Mat(4, 4),
+                    "sampler2D" => GlslType::Sampler2D,
+                    _ => panic!("unimplemented named type {:?}", &s)
+                }
+            },
+            _ => panic!("unimplemented type {:?}", &ty)
+        }
+    }
+
+    fn parse_type_from_sig(&self, fn_decl: &syn::Signature) -> GlslType {
+        let args = fn_decl.inputs.iter().map(|t| {
+            match t {
+                //syn::FnArg::Captured(syn::ArgCaptured { ty, .. }) => self.parse_type(ty),
+                syn::FnArg::Typed(syn::PatType { ty, .. }) => self.parse_type(ty),
+                _ => panic!("unimplemented argument")
+            }
+        }).collect();
+
+        let ret = match &fn_decl.output {
+            syn::ReturnType::Type(_, ty) => self.parse_type(ty),
+            syn::ReturnType::Default => GlslType::Void
+        };
+
+        GlslType::Fn { ret: Box::new(ret), args }
+    }
+
+    fn parse_argnames_from_sig(&self, fn_decl: &syn::Signature) -> Vec<String> {
+        let args = fn_decl.inputs.iter().map(|t| {
+            match t {
+                //syn::FnArg::Captured(syn::ArgCaptured { pat: syn::Pat::Ident(pat_ident), .. }) =>
+                syn::FnArg::Typed(syn::PatType { pat: box syn::Pat::Ident(pat_ident), .. }) =>
+                    pat_ident.ident.to_string(),
+                _ => panic!("unimplemented argument")
+            }
+        }).collect();
+        args
+    }
+
+    fn parse_item(&mut self, item: &syn::Item) -> Option<TypedAst> {
+        match item {
+            syn::Item::Static(syn::ItemStatic { attrs, ident, ty, expr, .. }) => {
+                let ty_ast = self.parse_type(ty);
+                let id = self.new_local(ident.to_string(), ty_ast);
+
+                {
+                    let global_list;
+                    if let [attr] = &attrs[..] {
+                        if attr.path.segments.len() != 1 {
+                            panic!("expected one attribute on local");
+                        }
+                        let global_kind_str = attr.path.segments.iter().nth(0).unwrap().ident.to_string();
+                        if &global_kind_str == "varying" {
+                            global_list = &mut self.module.varyings; // GlslGlobal::Varying(id);
+                        } else if &global_kind_str == "attribute" {
+                            global_list = &mut self.module.attributes; //GlslGlobal::Attribute(id);
+                        } else if &global_kind_str == "uniform" {
+                            global_list = &mut self.module.uniforms; //GlslGlobal::Uniform(id);
+                        } else {
+                            panic!("unknown global kind {}", &global_kind_str);
+                        }
+                    } else {
+                        panic!("global lacking attribute");
+                    }
+                
+                    global_list.push(id);
+                }
+
+                self.add_local(ident.to_string(), GlslLocal::Local(id));
+                None
+            }
+            syn::Item::Fn(syn::ItemFn { vis, sig, block, .. }) => {
+                let name = sig.ident.to_string();
+                let fn_type = self.parse_type_from_sig(sig);
+                let id = self.new_local(name.clone(), fn_type);
+                self.add_local(name, GlslLocal::Local(id));
+                let index = self.module.exports.push(id);
+                let arg_names: Vec<String> = self.parse_argnames_from_sig(sig);
+
+                let exported = match vis {
+                    Visibility::Public(_) => true,
+                    _ => false
+                };
+                
+                let local_count = self.begin_scope();
+                let expr = GlslAst::Block {
+                    stmts: block.stmts.iter().map(|s| self.parse_stmt(s)).flatten().map(|s| s.0).collect()
+                };
+                self.end_scope(local_count);
+
+                Some((GlslAst::Fn { id, exported, arg_names, expr: Box::new(expr) },
+                    GlslType::Void))
+            }
+            _ => {
+                None
+            }
+        }
+    }
+
+    pub fn assign_unify(&self, to: GlslType, from: GlslType) -> GlslType {
+        if to != GlslType::Unknown {
+            to
+        } else {
+            from
+        }
+    }
+
+    pub fn parse_var_pattern(&mut self, pat: &syn::Pat) -> String {
+        match pat {
+            syn::Pat::Ident(pat_ident) => {
+                pat_ident.ident.to_string()
+            },
+            _ => panic!("unimplemented var pattern {:?}", pat)
+        }
+    }
+
+    pub fn parse_stmt(&mut self, stmt: &syn::Stmt) -> Option<TypedAst> {
+        match stmt {
+            // TODO: Treat this as return when in correct context
+            Stmt::Expr(e) => Some(self.parse_expr(e)),
+            Stmt::Local(syn::Local { pat, init, .. }) => {
+                let name = self.parse_var_pattern(pat);
+                let ty = match pat { syn::Pat::Type(pat_type) => Some(&*pat_type.ty), _ => None };
+                // TODO: What about lets with both type and initializer?
+                // Verify them
+                let decl_ty = ty.as_ref().map(|t| self.parse_type(t)).unwrap_or(GlslType::Unknown);
+
+                let (value, value_ty) = match init {
+                    Some((_, e)) => {
+                        let (expr, expr_ty) = self.parse_expr(e);
+                        // TODO: Verify expr_ty is assignable to decl_ty (if set)
+                        (expr, expr_ty)
+                    }
+                    None => (GlslAst::Undef, GlslType::Unknown),
+                };
+
+                let ty = self.assign_unify(decl_ty, value_ty);
+
+                if ty == GlslType::Unknown {
+                    panic!("type of local {} could not be inferred", &name);
+                }
+                // TODO: Verify ty is not GlslType::Unknown
+
+                let mut locs = Vec::new();
+
+                //for (name, (value, ty)) in names.into_iter().zip(values_and_ty.into_iter()) {
+                let id = self.new_local(name.clone(), ty);
+                locs.push((name, value, id)); // TODO: Do we need name here?
+                //}
+                
+                Some((GlslAst::Locals { locs }, GlslType::Void))
+            },
+            Stmt::Item(item) => self.parse_item(item),
+            Stmt::Semi(e, _) => Some(self.parse_expr(e)),
+            //_ => panic!("unimplemented stmt {:?}", stmt)
+        }
+    }
+
+    pub fn parse_expr(&mut self, expr: &syn::Expr) -> TypedAst {
+        
+        match expr {
+            Expr::Lit(syn::ExprLit { lit, .. }) =>
+                match lit {
+                    syn::Lit::Int(lit_int) => (GlslAst::Lit { lit: GlslLit::Int(lit_int.base10_parse().unwrap()) }, GlslType::Int),
+                    //syn::Lit::Str(lit_str) => GlslAst::Lit { lit: GlslLit::Str(lit_str.value()) },
+                    syn::Lit::Float(lit_float) => (GlslAst::Lit { lit: GlslLit::Float(lit_float.base10_parse().unwrap()) }, GlslType::Float),
+                    _ => panic!("unimplemented literal {:?}", lit)
+                },
+            Expr::Paren(syn::ExprParen { expr, .. }) =>
+                self.parse_expr(expr),
+            Expr::Unary(syn::ExprUnary { expr, op, .. }) => {
+                let (v, t) = self.parse_expr(expr);
+                // Type doesn't change by unary operators (currently)
+                let ast = GlslAst::Unary {
+                    value: Box::new(v),
+                    op: self.map_unop(op),
+                };
+                (ast, t)
+            }
+            Expr::Binary(syn::ExprBinary { left, op, right, .. }) => {
+                let (l, l_t) = self.parse_expr(left);
+                let (r, r_t) = self.parse_expr(right);
+                // TODO: Unify types and apply operator. Comparisons produce bool, for instance.
+                let t = l_t;
+                let ast = GlslAst::Binary {
+                    left: Box::new(l),
+                    op: self.map_binop(op),
+                    right: Box::new(r),
+                };
+                (ast, t)
+            }
+            Expr::Loop(syn::ExprLoop { body, .. }) => {
+                let body_ast = body.stmts.iter().map(|s| self.parse_stmt(s)).flatten().map(|s| s.0).collect();
+                let ast = GlslAst::Loop {
+                    body: body_ast
+                };
+                (ast, GlslType::Void)
+            },
+            Expr::If(syn::ExprIf { cond, then_branch, else_branch, .. }) => {
+                // TODO: Handle types so that we can produce :?
+                // Also check that condition is bool
+                let (cond_ast, _) = self.parse_expr(cond);
+                let then_ast = then_branch.stmts.iter().map(|s| self.parse_stmt(s)).flatten().map(|s| s.0).collect();
+
+                let ast = GlslAst::If {
+                    cond: Box::new(cond_ast),
+                    then_branch: then_ast,
+                    else_branch: else_branch.as_ref().map(|(_, x)| Box::new(self.parse_expr(x).0))
+                };
+
+                (ast, GlslType::Void)
+            },
+            Expr::While(syn::ExprWhile { cond, body, .. }) => {
+                // TODO: Check that condition is bool
+                let (cond_ast, _) = self.parse_expr(cond);
+                let body_ast = body.stmts.iter().map(|s| self.parse_stmt(s)).flatten().map(|s| s.0).collect();
+                let ast = GlslAst::While {
+                    cond: Box::new(cond_ast),
+                    body: body_ast
+                };
+
+                (ast, GlslType::Void)
+            }
+            /* TODO?
+            Expr::Array(syn::ExprArray { elems, .. }) => {
+                JsAst::Array {
+                    elems: elems.iter().map(|e| self.parse_expr(e)).collect()
+                }
+            }
+            */
+            Expr::Path(syn::ExprPath { path, .. }) => {
+                    let segments: Vec<_> = path.segments.iter().map(|x| x.ident.to_string()).collect();
+                    if segments.len() == 1 {
+                        match self.find_local(&segments[0]) {
+                            Some(local) => self.local_to_ast(local),
+                            None => (GlslAst::Path { segments }, GlslType::Unknown)
+                        }
+                    } /* TODO? else if segments.len() == 2 {
+                        match self.find_local(&segments[0]) {
+                            Some(local) => {
+                                match local {
+                                    JsLocal::ModuleRef(module) =>
+                                        JsAst::ModuleMember { module, member: segments.remove(1) },
+                                    _ => JsAst::Path { path: segments }
+                                }
+                            },
+                            None => JsAst::Path { path: segments }
+                        }
+                    }*/ else {
+                        (GlslAst::Path { segments }, GlslType::Unknown)
+                    }
+                },
+            Expr::Call(syn::ExprCall { func, args, .. }) => {
+                let (func_ast, func_ty) = self.parse_expr(func);
+                let args_ast: Vec<TypedAst> = args.iter().map(|x| self.parse_expr(x)).collect();
+
+                // TODO: Match against args_ast types
+                let ty = self.get_return_type(&func_ty);
+
+                let ast = GlslAst::Call {
+                    func: Box::new(func_ast),
+                    args: args_ast.into_iter().map(|(a, _)| a).collect()
+                };
+
+                (ast, ty)
+            }
+            Expr::Assign(syn::ExprAssign { left, right, .. }) => {
+                let (left_ast, left_ty) = self.parse_expr(left);
+                let (right_ast, right_ty) = self.parse_expr(right);
+                // TODO: Check that right_ty is assignable to left_ty
+
+                self.check_assignable(&left_ast);
+                
+                let ast = GlslAst::Assign {
+                    left: Box::new(left_ast),
+                    right: Box::new(right_ast)
+                };
+
+                (ast, left_ty)
+            },
+            Expr::AssignOp(syn::ExprAssignOp { left, op, right, .. }) => {
+
+                let op_ast = self.map_binop(op);
+                let (left_ast, left_ty) = self.parse_expr(left);
+                let (right_ast, right_ty) = self.parse_expr(right);
+
+                // TODO: Check types
+                self.check_assignable(&left_ast);
+
+                let ast = match (op_ast, right_ast) {
+                    (GlslOp::AddEq, GlslAst::Lit { lit: GlslLit::Int(1) }) =>
+                        GlslAst::Unary {
+                            value: Box::new(left_ast),
+                            op: GlslUnop::PreInc
+                        },
+                    (GlslOp::SubEq, GlslAst::Lit { lit: GlslLit::Int(1) }) =>
+                        GlslAst::Unary {
+                            value: Box::new(left_ast),
+                            op: GlslUnop::PreDec
+                        },
+                    (_, right_ast) => 
+                        GlslAst::Binary {
+                            left: Box::new(left_ast),
+                            op: op_ast,
+                            right: Box::new(right_ast)
+                        },
+                };
+
+                (ast, left_ty)
+            },
+            /* TODO
+            Expr::MethodCall(syn::ExprMethodCall { receiver, method, args, .. }) => {
+                let receiver_ast = self.parse_expr(receiver);
+                let args_ast = args.iter().map(|a| self.parse_expr(a)).collect();
+                let method_str = method.to_string();
+
+                match receiver_ast {
+                    JsAst::ModuleRef { module } =>
+                        JsAst::Call {
+                            func: Box::new(JsAst::ModuleMember { module, member: method_str }),
+                            args: args_ast
+                        },
+                    r => JsAst::MethodCall {
+                        receiver: Box::new(r),
+                        method: method.to_string(),
+                        args: args_ast
+                    }
+                }
+            },
+            */
+            /* TODO
+            Expr::Index(syn::ExprIndex { expr, index, .. }) => {
+                let expr_ast = self.parse_expr(expr);
+                let index_ast = self.parse_expr(index);
+                GlslAst::Index { 
+                    expr: Box::new(expr_ast),
+                    index: Box::new(index_ast)
+                }
+            },
+            */
+            Expr::Field(syn::ExprField { base, member, .. }) => {
+                let (base_ast, base_ty) = self.parse_expr(base);
+                let member_str = match member {
+                    syn::Member::Named(id) => id.to_string(),
+                    syn::Member::Unnamed(id) => id.index.to_string(),
+                };
+
+/* TODO?
+                let ast = match base_ast {
+                    JsAst::ModuleRef { module } => JsAst::ModuleMember { module, member: member_str },
+                    b => JsAst::Field {
+                        base: Box::new(b),
+                        member: member_str
+                    }
+                }
+*/
+                let ast = GlslAst::Field {
+                    base: Box::new(base_ast),
+                    member: member_str
+                };
+
+                // TODO: Figure out type based on field and base_ty
+                (ast, GlslType::Unknown)
+            },
+            Expr::Block(syn::ExprBlock { block, .. }) => {
+                let local_count = self.begin_scope();
+
+                let b = GlslAst::Block {
+                    stmts: block.stmts.iter().map(|s| self.parse_stmt(s)).flatten().map(|s| s.0).collect()
+                };
+
+                self.end_scope(local_count);
+
+                (b, GlslType::Void)
+            }
+            /* TODO? What to use it for?
+            Expr::Closure(syn::ExprClosure { inputs, body, .. }) =>
+            {
+                let args: Vec<String> = inputs.iter().map(|i| {
+                    match i {
+                        syn::FnArg::Inferred(syn::Pat::Ident(pat_ident)) => pat_ident.ident.to_string(),
+                        _ => panic!("invalid pattern in lambda, {:?}", i)
+                    }
+                }).collect();
+
+                let local_count = self.begin_scope();
+
+                for arg in &args {
+                    self.add_local(arg, JsLocal::Local(arg.clone()));
+                }
+
+                let body_ast = self.parse_expr(body);
+
+                self.end_scope(local_count);
+
+                JsAst::Lambda {
+                    inputs: args,
+                    body: Box::new(body_ast)
+                }
+            }
+            */
+            Expr::Return(syn::ExprReturn { expr, .. }) => {
+                let v = match expr {
+                    Some(e) => self.parse_expr(e).0,
+                    None => GlslAst::Undef
+                };
+
+                let v = GlslAst::Return {
+                    value: Box::new(v)
+                };
+
+                (v, GlslType::Void)
+            }
+            _ => panic!("unimplemented expr {:?}", expr)
+        }
+    }
+
+    pub fn parse_glsl(&mut self, file: &syn::File) {
+        for item in &file.items {
+            //println!("item: {:?}", &item);
+            if let Some((ast, _)) = self.parse_item(item) {
+                self.module.items.push(ast);
+            }
+        }
+
+        bincode::serialize_into(&mut self.arr, &self.module).unwrap();
+    }
+}

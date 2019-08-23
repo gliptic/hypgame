@@ -1,0 +1,10 @@
+[package]
+name = "rustweb-bundler"
+version = "0.1.0"
+authors = ["Erik Lindroos <gliptic@gliptic.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rustweb_code = { path = "../rustweb-code" }

@@ -1,0 +1,26 @@
+* wasm-opt does not optimize load/store offset enough:
+
+ 000115: 20 04                      |     local.get 4
+ 000117: 41 dc 80 c0 00             |     i32.const 1048668
+ 00011c: 6a                         |     i32.add
+ 00011d: 20 07                      |     local.get 7
+ 00011f: 38 02 00                   |     f32.store 2 0
+
+ instead of:
+
+ 000115: 20 04                      |     local.get 4
+ 000117: 20 07                      |     local.get 7
+ 000119: 38 02 dc 80 c0 00          |     f32.store 2 1048668
+
+* rename all wasm exports and imports, including "memory"
+* rename global vars in glsl
+* wasm.U8/U32/etc. for memory access from js. only insert if used
+* inline imported wasm globals into js if they are never assigned
+
+GLSL:
+* Consider #define instead of function definiton if the parameters to a function are side-effect free
+    * Parameter ref does not need () if the context where it's inserted has a lower precedence than the expression
+* Normalize xyzw, rgba, stpq
+* Integers can be passed to vecN constructors without issue
+* Combine declarations into one where possible
+    (Try to move declarations together)

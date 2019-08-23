@@ -1,0 +1,19 @@
+[package]
+name = "rustweb_macro"
+version = "0.1.0"
+authors = ["Erik Lindroos <gliptic@gliptic.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+#syn = "0.15"
+syn = { version = "1.0", features = ["extra-traits", "full"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+serde = { version = "1.0.98", features = ["derive"] }
+bincode = "1.1.4"
+rustweb_code = { path = "../rustweb-code" }
+
+[lib]
+proc-macro = true
