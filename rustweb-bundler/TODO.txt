@@ -17,6 +17,14 @@
 * wasm.U8/U32/etc. for memory access from js. only insert if used
 * inline imported wasm globals into js if they are never assigned
 
+General:
+* How does probability distribution affect huffman tree encoding in DEFLATE?
+
+Hyp:
+* Store dependency information/side-effects for reordering and let-inlining
+    (Sea of nodes?)
+* Add @inline attribute for functions and maybe lets too (works like a macro)
+
 GLSL:
 * Consider #define instead of function definiton if the parameters to a function are side-effect free
     * Parameter ref does not need () if the context where it's inserted has a lower precedence than the expression
@@ -24,3 +32,8 @@ GLSL:
 * Integers can be passed to vecN constructors without issue
 * Combine declarations into one where possible
     (Try to move declarations together)
+* Names can be reused for functions when they can be disambiguated by overloading
+* A vector ctor with all the same parameter values can be specified with just one parameter with that value
+    * Matrices are the same, but the single value is used for the diagonal
+    * Matrices are column-wise
+* Common-prefixes in shaders in a shader module can be trivially moved over to the common part

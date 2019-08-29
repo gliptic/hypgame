@@ -233,6 +233,8 @@ impl JsEnc {
                         JsAst::ModuleRef { abs_index },
                     hyp::Local::ModuleMember { abs_index, local_index } =>
                         JsAst::ModuleMember { abs_index, local_index },
+                    hyp::Local::Builtin { ref name, .. } =>
+                        JsAst::Path { path: vec![name.clone()] },
                     hyp::Local::Local { index } =>
                         JsAst::Local { index }
                 }

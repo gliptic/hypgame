@@ -145,6 +145,7 @@ let render_w
 let render_h
 let viewTrans
 let viewTrans3d
+let viewPos3d
 
 let GL_VERTEX_SHADER = 0x8B31
 let GL_FRAGMENT_SHADER = 0x8B30
@@ -201,16 +202,18 @@ attribute vec4 color;
 
 uniform mat4 projection;
 uniform mat4 modelView;
+uniform vec3 viewPos;
 
 varying vec2 fsTexcoord;
 varying vec4 fsColor;
 varying vec4 fsPos;
-varying vec3 fsSkyPos;
+varying vec4 fsSkyPos;
 
 void main() {
     fsTexcoord = texcoord;
     fsPos = vec4(pos, 1);
-    fsSkyPos = normalize(pos);
+    fsSkyPos = vec4(pos + viewPos, 1);
+    fsColor = color;
     gl_Position = projection * modelView * vec4(pos, 1);
     //gl_Position = modelView * vec4(pos, 1);
     //gl_Position = vec4(pos, 1);
@@ -218,7 +221,7 @@ void main() {
 }`;
 
 let VERTEX_SIZE = (4 * 2) + (4 * 2) + (4)
-let VERTEX_SIZE3D = (4 * 3) + (4 * 2) + (4)
+let VERTEX_SIZE3D = (4 * 3) + (4 * 2) + (4 * 4)
 let MAX_BATCH = 10922
 let MAX_STACK = 100
 let MAT_SIZE = 6
@@ -238,6 +241,8 @@ let vColorData = new Uint32Array(vertexData)
 let vertexData3d = new ArrayBuffer(VERTEX_DATA_SIZE3D)
 let vPositionData3d = new Float32Array(vertexData3d)
 let vColorData3d = new Uint32Array(vertexData3d)
+
+let arrPositionData3d = [];
 let mat0 = 1
 let mat1 = 0
 let mat2 = 0
@@ -290,7 +295,9 @@ function setViewTransform3d(shader) {
     //var p = perspective3d(1.58, render_w / render_h, 1, 3000);
     var p = perspective3d(1, render_w / render_h, 1, 30000);
     gl.uniformMatrix4fv(gl.getUniformLocation(shader, "projection"), 0, p)
-    
+
+    //gl.uniformMatrix3fv(gl.getUniformLocation(shader, "viewPos"), 0, viewPos)
+    gl.uniform3fv(gl.getUniformLocation(shader, "viewPos"), viewPos3d)
 }
 
 function color(c) {
@@ -321,7 +328,25 @@ function setView3d(roty, rotx, tx, ty, zoom) {
         0, 0, 0, 1
     ]*/
 
-    viewTrans3d = mulmat3d(mulmat3d(rotx3d(rotx), roty3d(roty)), trans3d(tx, 0, ty));
+    /*
+             1 0 0 0,
+             0 1 0 0,
+             0 0 1 0,
+             x y z 1
+    a b c 0  a b c 0
+    e f g 0  e f g 0
+    i j k 0  i j k 0
+    m n o p  m+x n+y o+z p
+    */
+
+    var a = mulmat3d(rotx3d(rotx), roty3d(roty));
+    viewTrans3d = mulmat3d(a, trans3d(tx, 0, ty));
+    //console.log(a)
+    //console.log(viewTrans3d)
+    //viewTrans3d = mulmat3d(rotx3d(rotx), roty3d(roty));
+    //viewTrans3d[12] += tx;
+    //viewTrans3d[14] += ty;
+    viewPos3d = [tx, 0, ty]
 
     scale3d(viewTrans3d, 1 / zoom, 1 / zoom, 1 / zoom);
 }
@@ -341,14 +366,18 @@ function flush() {
 }
 
 function flush3d() {
-    if (count) {
+    if (arrPositionData3d.length) {
         gl.bindBuffer(GL_ARRAY_BUFFER, VBO3D)
         checkErr(gl.vertexAttribPointer(locPos, 3, GL_FLOAT, 0, VERTEX_SIZE3D, 0))
         checkErr(gl.vertexAttribPointer(locUV, 2, GL_FLOAT, 0, VERTEX_SIZE3D, 12))
-        checkErr(gl.vertexAttribPointer(locColor, 4, GL_UNSIGNED_BYTE, 1, VERTEX_SIZE3D, 20))
-        gl.bufferSubData(GL_ARRAY_BUFFER, 0, vPositionData3d.subarray(0, count * QUAD_SIZE_IN_WORDS3D))
-        gl.drawArrays(GL_TRIANGLES, 0, count * VERTICES_PER_QUAD)
-        count = 0
+        //checkErr(gl.vertexAttribPointer(locColor, 4, GL_UNSIGNED_BYTE, 1, VERTEX_SIZE3D, 20))
+        checkErr(gl.vertexAttribPointer(locColor, 4, GL_FLOAT, 0, VERTEX_SIZE3D, 20))
+        //gl.bufferSubData(GL_ARRAY_BUFFER, 0, vPositionData3d.subarray(0, count * QUAD_SIZE_IN_WORDS3D))
+        gl.bufferSubData(GL_ARRAY_BUFFER, 0, new Float32Array(arrPositionData3d));
+        //console.log(arrPositionData3d.length, arrPositionData3d.length / (VERTEX_SIZE3D / 4));
+        gl.drawArrays(GL_TRIANGLES, 0, arrPositionData3d.length / (VERTEX_SIZE3D / 4));
+        arrPositionData3d.length = 0;
+        //count = 0
     }
     currentTexture = null
 }
@@ -367,7 +396,7 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
     let y3 = y
     let z3 = z
     let offset = 0
-    let argb = col
+    let abgr = col
 
     if (texture != currentTexture || count + 1 >= MAX_BATCH) {
         flush3d()
@@ -377,6 +406,12 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
         }
     }
 
+    var a = (abgr >>> 24) / 255;
+    var b = ((abgr >> 16) & 0xff) / 255;
+    var g = ((abgr >> 8) & 0xff) / 255;
+    var r = (abgr & 0xff) / 255;
+
+    /*
     offset = count * QUAD_SIZE_IN_WORDS3D - 1
     // Vertex Order
     // Vertex Position | UV | ARGB
@@ -386,7 +421,11 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
     vPositionData3d[++offset] = z0;
     vPositionData3d[++offset] = u0
     vPositionData3d[++offset] = v0
-    vColorData3d[++offset] = argb
+    //vColorData3d[++offset] = argb
+    vPositionData3d[++offset] = r;
+    vPositionData3d[++offset] = g;
+    vPositionData3d[++offset] = b;
+    vPositionData3d[++offset] = a;
 
     // Vertex 4
     vPositionData3d[++offset] = x3
@@ -394,7 +433,11 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
     vPositionData3d[++offset] = z3;
     vPositionData3d[++offset] = u1
     vPositionData3d[++offset] = v0
-    vColorData3d[++offset] = argb
+    //vColorData3d[++offset] = argb
+    vPositionData3d[++offset] = r;
+    vPositionData3d[++offset] = g;
+    vPositionData3d[++offset] = b;
+    vPositionData3d[++offset] = a;
     
     // Vertex 2
     vPositionData3d[++offset] = x1
@@ -402,7 +445,11 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
     vPositionData3d[++offset] = z1;
     vPositionData3d[++offset] = u1
     vPositionData3d[++offset] = v1
-    vColorData3d[++offset] = argb
+    //vColorData3d[++offset] = argb
+    vPositionData3d[++offset] = r;
+    vPositionData3d[++offset] = g;
+    vPositionData3d[++offset] = b;
+    vPositionData3d[++offset] = a;
 
     // Vertex 1
     vPositionData3d[++offset] = x0
@@ -410,7 +457,11 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
     vPositionData3d[++offset] = z0;
     vPositionData3d[++offset] = u0
     vPositionData3d[++offset] = v0
-    vColorData3d[++offset] = argb
+    //vColorData3d[++offset] = argb
+    vPositionData3d[++offset] = r;
+    vPositionData3d[++offset] = g;
+    vPositionData3d[++offset] = b;
+    vPositionData3d[++offset] = a;
 
     // Vertex 2
     vPositionData3d[++offset] = x1
@@ -418,7 +469,11 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
     vPositionData3d[++offset] = z1;
     vPositionData3d[++offset] = u1
     vPositionData3d[++offset] = v1
-    vColorData3d[++offset] = argb
+    //vColorData3d[++offset] = argb
+    vPositionData3d[++offset] = r;
+    vPositionData3d[++offset] = g;
+    vPositionData3d[++offset] = b;
+    vPositionData3d[++offset] = a;
     
     // Vertex 3
     vPositionData3d[++offset] = x2
@@ -426,10 +481,21 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
     vPositionData3d[++offset] = z2;
     vPositionData3d[++offset] = u0
     vPositionData3d[++offset] = v1
-    vColorData3d[++offset] = argb
-    
-    if (++count >= MAX_BATCH) {
-        flush3d()
+    //vColorData3d[++offset] = argb
+    vPositionData3d[++offset] = r;
+    vPositionData3d[++offset] = g;
+    vPositionData3d[++offset] = b;
+    vPositionData3d[++offset] = a;*/
+
+    if (arrPositionData3d.push(
+        x0,y0,z0,u0,v0,r,g,b,a,
+        x3,y3,z3,u1,v0,r,g,b,a,
+        x1,y1,z1,u1,v1,r,g,b,a,
+        x0,y0,z0,u0,v0,r,g,b,a,
+        x1,y1,z1,u1,v1,r,g,b,a,
+        x2,y2,z2,u0,v1,r,g,b,a) >= MAX_BATCH * QUAD_SIZE_IN_WORDS3D) {
+
+        flush3d();
     }
 }
 
@@ -517,6 +583,7 @@ function activateShader3d(shader) {
 function compileShader(source, ty) {
     let shader = gl.createShader(ty)
     gl.shaderSource(shader, "#extension GL_OES_standard_derivatives:enable\nprecision lowp float;" + source)
+    //gl.shaderSource(shader, "precision lowp float;" + source)
     gl.compileShader(shader)
 
     if (!gl.getShaderParameter(shader, GL_COMPILE_STATUS)) {
@@ -556,6 +623,7 @@ function createShaderProgram(vsSource, fsSource, is3d) {
 }
 
 function checkErr(v) {
+    /* TEMP
     let err = gl.getError()
     if (err != 0) {
         for (var k in gl) {
@@ -566,6 +634,7 @@ function checkErr(v) {
         console.log("error:", err)
         console.trace()
     }
+    */
     return v
 }
 
@@ -589,11 +658,6 @@ function render_init(canvas) {
 
     VBO3D = createBuffer(GL_ARRAY_BUFFER, VERTEX_DATA_SIZE3D, GL_DYNAMIC_DRAW)
     //gl.bindBuffer(GL_ARRAY_BUFFER, VBO3D)
-    
-    //checkErr(gl.enableVertexAttribArray(locPos))
-    //checkErr(gl.enableVertexAttribArray(locUV))
-    //checkErr(gl.enableVertexAttribArray(locColor))
-
     gl.activeTexture(GL_TEXTURE0)
 }
 
@@ -604,15 +668,18 @@ let fs3d = `
 varying vec2 fsTexcoord;
 varying vec4 fsColor;
 varying vec4 fsPos;
-varying vec3 fsSkyPos;
+varying vec4 fsSkyPos;
 uniform sampler2D s;
 
 const vec4 skytop = vec4(0.0, 0.0, 0.5, 1.0);
 const vec4 skyhorizon = vec4(0.3294, 0.92157, 1.0, 1.0);
 
 void main() {
-    vec4 c = mix(skyhorizon, skytop, fsSkyPos.y);
-    gl_FragColor = vec4(1.0 + 0.5 * cos(fsSkyPos.z * 10.0), c.gb, 1);
+    vec3 sky = normalize(fsSkyPos.xyz);
+    vec4 c = mix(skyhorizon, skytop, cos(sky.y * 50.0) * cos(sky.x * 50.0));
+    //gl_FragColor = vec4(1.0 + 0.5 * cos(fsSkyPos.z * 10.0), c.gb, 1);
+    gl_FragColor = vec4(c.rgb, 1) * fsColor;
+    //gl_FragColor = fsColor;
     //gl_FragColor = vec4(1, 1, 1, 1);
     //gl_FragColor = texture2D(s, fsTexcoord)*fsColor;
     //gl_FragColor = texture2D(s, fsTexcoord);
@@ -765,6 +832,27 @@ function clamp(x, min, max) {
     }
 }
 
+var Grid = function(w,h) {
+    return {
+        c: Array(w*h).fill(0),
+        get: function(x, y) {
+            return this.c[y * w + x];
+        },
+        set: function(x, y, v) {
+            this.c[y * w + x] = v;
+        },
+    };
+}
+
+var map = Grid(32, 32);
+//var visual = Grid(32, 32);
+
+for (var i = 0; i < 10; ++i) {
+    map.set(Math.random() * 31 | 0, Math.random() * 31 | 0, 1);
+}
+
+
+
 function startGame() {
     let imgShader;
     let shader3d;
@@ -826,65 +914,6 @@ function startGame() {
         return 0xff000000 + (alpha << 0) + (alpha << 8) + (alpha << 16);
     }
 
-    function len([x,y]) {
-        return Math.hypot(x,y);
-    }
-
-    function circ(p, r) {
-        return len(p) - r;
-    }
-
-    function vsub([x,y], [x2,y2]) {
-        return [x-x2,y-y2];
-    }
-
-    function intersect(v1,v2) {
-        return v1[0] > v2[0] ? v1 : v2;
-    }
-
-    function union_c(v1, v2) {
-        return v1[0] < v2[0] ? v1 : v2;
-    }
-
-    function union(d1, d2) {
-        return Math.min(d1, d2);
-    }
-
-    function subtract(d1, d2) {
-        return Math.max(-d1, d2);
-    }
-
-    function subtract_c([d1,c1], v2) {
-        return -d1 > v2[0] ? [-d1, c1] : v2;
-    }
-
-    function mix_color(c1, c2, f) {
-        var r = mix((c1 >>> 16) & 0xff, (c2 >>> 16) & 0xff, f) << 16;
-        var g = mix((c1 >>> 8) & 0xff, (c2 >>> 8) & 0xff, f) << 8;
-        var b = mix(c1 & 0xff, c2 & 0xff, f) << 0;
-        return r | g | b;
-    }
-
-    function mix(d1,d2,f) {
-        return d2 * f + d1 * (1-f);
-    }
-
-    function mix_c([d1,c1],[d2,c2],f) {
-        return [d2*f + d1*(1-f), mix_color(c1, c2, f)];
-    }
-
-    function sm_subtract_c([d1,c1], [d2,c2], k) {
-        let h = clamp(0.5 - 0.5*(d2 + d1)/k, 0, 1);
-        let r = mix_c([d2,c2], [-d1,c1], h);
-        return [r[0] + k*h*(1-h), r[1]];
-    }
-
-    /*
-    vec4 banana2(vec2 p){
-    return vec4(1.,1.,1.,.5)-
-    S(vec4(0.,0.,1.,C(p,40.)),vec4(.735,.8,.94,C(p-vec2(20.,20.),30.)),10.);
-}*/
-
     function rkey(x, y) {
         var v = [x/4 - 64, y/4 - 64];
         //var c = subtract_c(
@@ -900,40 +929,28 @@ function startGame() {
     let pointTex = genTex(new Uint32Array(128*128), GL_RGBA, getPointColor);
     //let pointTex = genTex(new Uint32Array(512*512), GL_RGBA, rkey);
 
-    var rotx = 0.0;
-    var roty = 0.0;
+    var rotx = 300.0;
+    var roty = 100.0;
 
     canvas.onmousemove = function(e) {
         if (document.pointerLockElement === canvas) {
             rotx += e.movementY;
             roty += e.movementX;
         }
-        /*
-        y += e.movementY;
-        if (x > canvas.width + RADIUS) {
-          x = -RADIUS;
-        }
-        if (y > canvas.height + RADIUS) {
-          y = -RADIUS;
-        }  
-        if (x < -RADIUS) {
-          x = canvas.width + RADIUS;
-        }
-        if (y < -RADIUS) {
-          y = canvas.height + RADIUS;
-        }
-        tracker.textContent = "X position: " + x + ", Y position: " + y;
-      
-        if (!animation) {
-          animation = requestAnimationFrame(function() {
-            animation = null;
-            canvasDraw();
-          });
-        }
-        */
-      }
+    }
 
-    let t = 0.0;
+    //setView(0, 0, 1, 0, 1.0);
+    //activateShader(imgShader);
+
+    // Generate stuff
+    canvas.width = canvas.height = 512;
+    gl.clear(GL_COLOR_BUFFER_BIT);
+    var buf = new Uint8Array(512 * 512 * 4)
+    gl.readPixels(0, 0, 512, 512, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    console.log(buf.subarray(0, 8));
+    
+
+    let t = 10.0;
     function update() {
         window.requestAnimationFrame(function(currentTime) {
             update();
@@ -942,20 +959,14 @@ function startGame() {
             gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
             gl.clear(GL_COLOR_BUFFER_BIT);
 
-            /*
-            let p = Math.random() * grid_size >>> 0;
-            imgdata[p][0] = clamp(imgdata[p][0] + Math.random(), 0, 128 - cell_size*2);
-            imgdata[p][1] = clamp(imgdata[p][0] + Math.random(), 0, 128 - cell_size*2);
-            pointTex.reload();
-            */
-
             {
                 t += 5;
                 //setView3d(rotx / 10, 1.0);
                 setView3d(roty / 500, rotx / 500, t, t, 1.0);
                 activateShader3d(shader3d);
 
-                color(0xff770077);
+                //color(0xff00ff00);
+                color(0xffffffff);
                 for (var x = -10000; x < 10000; x += 512 * 2 * 1.5) {
                     img3d(pointTex, x, -256 * 4, -2500, 512 * 2, 512 * 4, 0, 0, 1, 1);
                 }

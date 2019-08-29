@@ -1,81 +1,70 @@
 use vecmath
 use vertex_glsl
 
-pub let gl
-pub let w
-pub let h
-pub let viewTrans
+pub let gl, canvas_w, canvas_h, viewTrans
 
-pub let GL_VERTEX_SHADER = 0x8B31
-pub let GL_FRAGMENT_SHADER = 0x8B30
-pub let GL_ELEMENT_ARRAY_BUFFER = 0x8893
-pub let GL_ARRAY_BUFFER = 0x8892
-pub let GL_TEXTURE0 = 0x84C0
+pub let GL_VERTEX_SHADER = 0x8B31,
+    GL_FRAGMENT_SHADER = 0x8B30,
+    GL_ELEMENT_ARRAY_BUFFER = 0x8893,
+    GL_ARRAY_BUFFER = 0x8892,
+    GL_TEXTURE0 = 0x84C0
 
-pub let GL_SRC_ALPHA =           0x0302
-pub let GL_ONE_MINUS_SRC_ALPHA = 0x0303
-pub let GL_DST_ALPHA =           0x0304
-pub let GL_ONE_MINUS_DST_ALPHA = 0x0305
-pub let GL_DST_COLOR =           0x0306
-pub let GL_ONE_MINUS_DST_COLOR = 0x0307
-pub let GL_BLEND = 0x0BE2
-pub let GL_RGBA = 0x1908
-pub let GL_LUMINANCE = 0x1909
+pub let GL_SRC_ALPHA =           0x0302,
+    GL_ONE_MINUS_SRC_ALPHA = 0x0303,
+    GL_DST_ALPHA =           0x0304,
+    GL_ONE_MINUS_DST_ALPHA = 0x0305,
+    GL_DST_COLOR =           0x0306,
+    GL_ONE_MINUS_DST_COLOR = 0x0307,
+    GL_BLEND = 0x0BE2,
+    GL_RGBA = 0x1908,
+    GL_LUMINANCE = 0x1909
 
-pub let GL_TRIANGLES = 0x0004
-pub let GL_TRIANGLE_STRIP = 0x0005
-pub let GL_UNSIGNED_BYTE = 0x1401
-pub let GL_UNSIGNED_SHORT = 0x1403
-pub let GL_FLOAT = 0x1406
-pub let GL_STATIC_DRAW = 0x88E4
-pub let GL_DYNAMIC_DRAW = 0x88E8
-pub let GL_COMPILE_STATUS = 0x8B81
-pub let GL_LINK_STATUS = 0x8B82
-pub let GL_TEXTURE_2D = 0x0DE1
-pub let GL_TEXTURE_WRAP_S = 0x2802
-pub let GL_TEXTURE_WRAP_T = 0x2803
-pub let GL_TEXTURE_MAG_FILTER = 0x2800
-pub let GL_TEXTURE_MIN_FILTER = 0x2801
-pub let GL_NEAREST = 0x2600
-pub let GL_LINEAR = 0x2601
-pub let GL_CLAMP_TO_EDGE = 0x812F
-pub let GL_COLOR_BUFFER_BIT = 0x00004000
+pub let GL_TRIANGLES = 0x0004,
+    GL_TRIANGLE_STRIP = 0x0005,
+    GL_UNSIGNED_BYTE = 0x1401,
+    GL_UNSIGNED_SHORT = 0x1403,
+    GL_FLOAT = 0x1406,
+    GL_STATIC_DRAW = 0x88E4,
+    GL_DYNAMIC_DRAW = 0x88E8,
+    GL_COMPILE_STATUS = 0x8B81,
+    GL_LINK_STATUS = 0x8B82,
+    GL_TEXTURE_2D = 0x0DE1,
+    GL_TEXTURE_WRAP_S = 0x2802,
+    GL_TEXTURE_WRAP_T = 0x2803,
+    GL_TEXTURE_MAG_FILTER = 0x2800,
+    GL_TEXTURE_MIN_FILTER = 0x2801,
+    GL_NEAREST = 0x2600,
+    GL_LINEAR = 0x2601,
+    GL_CLAMP_TO_EDGE = 0x812F,
+    GL_COLOR_BUFFER_BIT = 0x00004000
 
-pub let basicVs = vertex_glsl.main #TODO: glsl.vertex
+pub let basicVs = vertex_glsl.main
 
-let wasm_memory = wasm.memory.buffer
-let wasm_U8 = Uint8Array.new(wasm_memory)
-let wasm_U32 = Uint32Array.new(wasm_memory)
-let VERTEX_SIZE = (4 * 2) + (4 * 2) + (4)
+#let wasm_memory = wasm.memory.buffer
+#let wasm_U8 = Uint8Array.new(wasm_memory)
+#let wasm_U32 = Uint32Array.new(wasm_memory)
+let VERTEX_SIZE = (4 * 3) + (4 * 2) + (4)
 let MAX_BATCH = 10922
-let MAX_STACK = 100
-let MAT_SIZE = 6
+#let MAX_STACK = 100
+#let MAT_SIZE = 6
 let VERTICES_PER_QUAD = 6
 let QUAD_SIZE_IN_WORDS = (VERTEX_SIZE * VERTICES_PER_QUAD) / 4
 let VERTEX_DATA_SIZE = VERTEX_SIZE * MAX_BATCH * 6
 
 let VBO
-let count = 0
+#let count = 0
 let currentTexture
-let vertexData = ArrayBuffer.new(VERTEX_DATA_SIZE)
-let vPositionData = Float32Array.new(vertexData)
-let vColorData = Uint32Array.new(vertexData)
-let mat0 = 1
-let mat1 = 0
-let mat2 = 0
-let mat3 = 1
-let mat4 = 0
-let mat5 = 0
-let stack = []
-let locPos = 0
-let locUV = 1
-let locColor = 2
+#let vertexData = ArrayBuffer.new(VERTEX_DATA_SIZE)
+#let vPositionData = Float32Array.new(vertexData)
+#let vColorData = Uint32Array.new(vertexData)
+let vertexData = [];
+let locPos = 0, locUV = 1, locColor = 2
 let col = 0xffffffff
 
 fn initGl(canvas) {
     gl := canvas.getContext("webgl")
-    w := canvas.width
-    h := canvas.height
+    canvas_w := canvas.width
+    canvas_h := canvas.height
     gl.clearColor(0.0, 0.2, 0.0, 1.0)
 }
 
@@ -106,7 +95,7 @@ pub fn color(c) {
 }
 
 pub fn setView(x, y, rotx, roty, zoom) {
-    let ratio = h / w
+    let ratio = canvas_h / canvas_w
 
     viewTrans := [
         1, 0, 0,
@@ -203,6 +192,27 @@ pub fn img(texture, x, y, w_, h_, u0, v0, u1, v1) {
     }
 }
 
+pub fn img_simple2(x, y, w_, h_, r, g, b, a) {
+    let x0 = x, y0 = y
+    let x1 = x + w_, y1 = y + h_
+    let x2 = x, y2 = y + h_
+    let x3 = x + w_, y3 = y
+    let u0 = 0, v0 = 0
+    let u1 = 1, v1 = 1
+
+    if vPositionData.push(
+        x0,y0,u0,v0,r,g,b,a,
+        x3,y3,u1,v0,r,g,b,a,
+        x1,y1,u1,v1,r,g,b,a,
+        x0,y0,u0,v0,r,g,b,a,
+        x1,y1,u1,v1,r,g,b,a,
+        x2,y2,u0,v1,r,g,b,a) >= MAX_BATCH * 4 * 6 {
+
+        flush()
+    }
+    
+}
+
 pub fn img_simple(x, y, argb) {
     let x0 = x
     let y0 = y
@@ -258,7 +268,7 @@ pub fn img_simple(x, y, argb) {
     
     # Vertex 3
     vPositionData[offset += 1] := x2
-    vPositionData[offset += 1] := x2
+    vPositionData[offset += 1] := y2
     vPositionData[offset += 1] := u0
     vPositionData[offset += 1] := v1
     vColorData[offset += 1] := argb

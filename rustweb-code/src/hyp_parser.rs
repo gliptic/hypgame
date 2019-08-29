@@ -44,6 +44,7 @@ const TT_CONSTSTR: u16 = 28;
 const TT_PUB: u16 = 29;
 const TT_AT: u16 = 30;
 const TT_CONSTFLOAT: u16 = 31;
+const TT_SEMICOLON: u16 = 32;
 const TT_EOF: u16 = 254;
 const TT_INVALID: u16 = 255;
 
@@ -54,21 +55,29 @@ pub type LocalRef = u32;
 pub type Ident = String;
 
 #[derive(Debug)]
-pub struct ParseError(pub usize, pub &'static str);
+pub struct ParseError(pub Span, pub &'static str);
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
 #[derive(Debug)]
 pub struct ParamDef {
     pub name: Ident,
+    //pub pat: Pattern,
     pub ty: AstType,
     pub local_index: u32
+}
+
+#[derive(Clone, Debug)]
+pub enum Pattern {
+    Ident(Ident),
+    Array(Vec<Pattern>)
 }
 
 #[derive(Clone, Debug)]
 pub enum Local {
     ModuleRef { abs_index: u32 },
     ModuleMember { abs_index: u32, local_index: u32 },
+    Builtin { name: String, ty: AstType },
     //SelfMember { member_index: u32 },
     Local { index: u32 }
 }
@@ -135,9 +144,42 @@ pub enum AstType {
     U8,
     Str,
     Fn(Box<AstType>, Vec<AstType>),
+    Ctor(Box<AstType>), // Arbitrary parameters for now
     Vec(Box<AstType>, u32),
     Mat(Box<AstType>, u32, u32),
     Other(Ident)
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct AstTy(u32);
+
+impl AstTy {
+    const fn uninit() -> AstTy {
+        AstTy(0)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct AstTyParams {
+    params: Vec<AstTy>,
+    rest: bool
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct AstTyInt {
+    bits: u32,
+    signed: bool
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum AstTyData {
+    None,
+    Any,
+    Int(AstTyInt),
+    Float(u32),
+    Fn(AstTy, AstTyParams),
+    Vec(AstTy, u32),
+    Mat(AstTy, u32, u32)
 }
 
 impl AstType {
@@ -156,9 +198,13 @@ impl AstType {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Span(pub usize, pub usize);
+
 #[derive(Debug)]
 pub struct Ast {
     pub ty: AstType,
+    pub loc: Span,
     pub data: AstData
 }
 
@@ -207,6 +253,7 @@ pub struct Parser<'a> {
     lextable: [u16; 256],
     tt: u16,
     src: &'a [u8],
+    prev_cur: usize,
     cur: usize,
     token_ident: Ident,
     token_prec: u8,
@@ -257,6 +304,7 @@ impl<'a> Parser<'a> {
             (b'[', ltab_pair(LEX_SINGLE_CHAR, TT_LBRACKET)),
             (b']', ltab_pair(LEX_SINGLE_CHAR, TT_RBRACKET)),
             (b',', ltab_pair(LEX_SINGLE_CHAR, TT_COMMA)),
+            (b';', ltab_pair(LEX_SINGLE_CHAR, TT_SEMICOLON)),
             (b'.', ltab_pair(LEX_SINGLE_CHAR, TT_DOT)),
             //(b'?', ltab_pair(LEX_SINGLE_CHAR, TT_QUESTIONMARK)),
             (b':', ltab_pair(LEX_OP, 0)),
@@ -282,6 +330,7 @@ impl<'a> Parser<'a> {
             lextable,
             src,
             tt: TT_LBRACE,
+            prev_cur: 0,
             cur: 0,
             token_number: 0,
             token_float: 0.0,
@@ -297,6 +346,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn next(&mut self) {
+        self.prev_cur = self.cur;
         let mut ch = self.src[self.cur];
         self.cur += 1;
         let mut lexcat = self.lextable[ch as usize];
@@ -375,6 +425,7 @@ impl<'a> Parser<'a> {
                  && self.tt != TT_LBRACKET
                  && self.tt != TT_LBRACE
                  && self.tt != TT_COMMA
+                 && self.tt != TT_SEMICOLON
                  && self.tt != TT_EQUAL
                  //&& self.tt != TT_BAR
                  && self.tt != TT_OPIDENT
@@ -383,7 +434,7 @@ impl<'a> Parser<'a> {
                  && self.tt != TT_LET
                  && self.tt != TT_DOLLAR {
 
-                    self.tt = TT_COMMA;
+                    self.tt = TT_SEMICOLON;
                     //dbg!(self.tt);
                     return;
                 }
@@ -494,7 +545,7 @@ impl<'a> Parser<'a> {
     pub fn peek_check(&mut self, token: Tt) -> ParseResult<()> {
         if token != self.tt {
             println!("Expected {}, got {}", token, self.tt);
-            Err(ParseError(self.cur, "unexpected token"))
+            Err(ParseError(self.span(), "unexpected token"))
         } else {
             Ok(())
         }
@@ -503,7 +554,7 @@ impl<'a> Parser<'a> {
     pub fn check(&mut self, token: Tt) -> ParseResult<()> {
         if token != self.tt {
             println!("Expected {}, got {}", token, self.tt);
-            Err(ParseError(self.cur, "unexpected token"))
+            Err(ParseError(self.span(), "unexpected token"))
         } else {
             self.next();
             Ok(())
@@ -516,7 +567,7 @@ impl<'a> Parser<'a> {
             self.next();
             Ok(ident)
         } else {
-            Err(ParseError(self.cur, "expected identifier"))
+            Err(ParseError(self.span(), "expected identifier"))
         }
     }
 
@@ -525,8 +576,12 @@ impl<'a> Parser<'a> {
         Ok(AstType::Other(name))
     }
 
+    pub fn span(&self) -> Span {
+        Span(self.prev_cur, self.cur)
+    }
+
     pub fn new_app(&mut self, fun: AstRef, params: Vec<Ast>, kind: AppKind) -> Ast {
-        Ast { ty: AstType::Any, data: AstData::App { fun, params, kind } }
+        Ast { loc: self.span(), ty: AstType::Any, data: AstData::App { fun, params, kind } }
     }
 
     pub fn new_lambda(&mut self, params: Vec<ParamDef>, return_type: AstType) -> AstLambda {
@@ -536,6 +591,16 @@ impl<'a> Parser<'a> {
             return_type
         }
     }
+
+    pub fn test_comma_or_semi(&mut self) -> bool {
+        self.test(TT_COMMA) || self.test(TT_SEMICOLON)
+    }
+
+/*
+    pub fn pattern_to_locals(&mut ) {
+
+    }
+*/
 
     pub fn rparameters(&mut self, params: &mut Vec<ParamDef>) -> ParseResult<()> {
         while self.tt != TT_RPAREN {
@@ -550,7 +615,7 @@ impl<'a> Parser<'a> {
             let local_index = self.new_local(name.clone(), ty.clone());
             // TODO: Don't need to store name, ty here later on
             params.push(ParamDef { name, ty, local_index });
-            if !self.test(TT_COMMA) {
+            if !self.test_comma_or_semi() {
                 break;
             }
         }
@@ -578,7 +643,7 @@ impl<'a> Parser<'a> {
 
     pub fn check_bar(&mut self) -> ParseResult<()> {
         if !self.test_bar() {
-            Err(ParseError(self.cur, "Expected '|'"))
+            Err(ParseError(self.span(), "Expected '|'"))
         } else {
             Ok(())
         }
@@ -604,13 +669,14 @@ impl<'a> Parser<'a> {
     pub fn rprimary_del(&mut self) -> ParseResult<Ast> {
         let r = match self.tt {
             TT_CONSTINT => {
-                Ast { ty: AstType::U64, data: AstData::ConstNum { v: self.token_number } }
+                Ast { loc: self.span(), ty: AstType::U64, data: AstData::ConstNum { v: self.token_number } }
             },
             TT_CONSTFLOAT => {
-                Ast { ty: AstType::F64, data: AstData::ConstFloat { v: self.token_float } }
+                Ast { loc: self.span(), ty: AstType::F64, data: AstData::ConstFloat { v: self.token_float } }
             },
             TT_CONSTSTR => {
                 Ast {
+                    loc: self.span(),
                     ty: AstType::Str,
                     data: AstData::ConstStr {
                         v: std::mem::replace(&mut self.token_ident, String::new())
@@ -638,7 +704,7 @@ impl<'a> Parser<'a> {
                 self.rrecord_body(&mut elems);
                 self.ast_anyty(AstData::Array { elems })
             },
-            _ => { return Err(ParseError(self.cur, "expected expression")) }
+            _ => { return Err(ParseError(self.span(), "expected expression")) }
         };
 
         Ok(r)
@@ -649,7 +715,7 @@ impl<'a> Parser<'a> {
             let v = self.rexpr()?;
             exprs.push(v);
 
-            if !self.test(TT_COMMA) {
+            if !self.test_comma_or_semi() {
                 break;
             }
         }
@@ -741,7 +807,7 @@ impl<'a> Parser<'a> {
             Ok(self.ast_anyty(AstData::Loop { body }))
         } else if self.test(TT_RETURN) {
             let value;
-            if self.tt == TT_RBRACE || self.tt == TT_COMMA {
+            if self.tt == TT_RBRACE || self.tt == TT_SEMICOLON {
                 value = None;
             } else {
                 value = Some(Box::new(self.rexpr()?));
@@ -831,6 +897,7 @@ impl<'a> Parser<'a> {
 
     pub fn ast_anyty(&self, data: AstData) -> Ast {
         Ast {
+            loc: self.span(),
             ty: AstType::Any,
             data
         }
@@ -857,7 +924,7 @@ impl<'a> Parser<'a> {
                             _ => panic!("unknown language")
                         }
                         self.check(TT_RPAREN)?;
-                        self.test(TT_COMMA);
+                        self.test(TT_SEMICOLON);
                         continue 'itemloop;
                     }
 
@@ -894,7 +961,7 @@ impl<'a> Parser<'a> {
 
                         let local_index = self.new_local(param_name.clone(), param_ty.clone());
                         params.push(ParamDef { name: param_name, ty: param_ty, local_index });
-                        if !self.test(TT_COMMA) {
+                        if !self.test_comma_or_semi() {
                             break;
                         }
                     }
@@ -938,42 +1005,52 @@ impl<'a> Parser<'a> {
 
                 self.next();
 
-                let name = self.check_ident()?;
-                let ty;
-                if self.test(TT_COLON) {
-                    ty = self.rtype()?;
-                } else {
-                    ty = AstType::Any;
-                }
+                loop {
 
-                let init;
-                if self.test(TT_EQUAL) {
-                    init = Some(Box::new(self.rexpr()?));
-                    // TODO: Unify types? Do in resolve
-                } else {
-                    init = None;
-                }
-
-                let local_index = self.new_local(
-                    name.clone(),
-                    ty.clone()); // TODO: ty will not be needed below later on
-
-                if is_pub {
-                    self.exports.push(local_index);
-                    self.exports_rev.insert(name.clone(), local_index);
-                }
-
-                lambda.expr.push(Ast {
-                    ty: AstType::None,
-                    data: AstData::LetLocal {
-                        name, ty, init, local_index, attr
+                    let name = self.check_ident()?;
+                    let ty;
+                    if self.test(TT_COLON) {
+                        ty = self.rtype()?;
+                    } else {
+                        // TODO: Decide whether to use None or Any for undeclared types
+                        ty = AstType::Any;
                     }
-                });
+
+                    let init;
+                    if self.test(TT_EQUAL) {
+                        init = Some(Box::new(self.rexpr()?));
+                        // TODO: Unify types? Do in resolve
+                    } else {
+                        init = None;
+                    }
+
+                    let local_index = self.new_local(
+                        name.clone(),
+                        ty.clone()); // TODO: ty will not be needed below later on
+
+                    if is_pub {
+                        self.exports.push(local_index);
+                        self.exports_rev.insert(name.clone(), local_index);
+                    }
+
+                    lambda.expr.push(Ast {
+                        loc: self.span(),
+                        ty: AstType::None,
+                        data: AstData::LetLocal {
+                            name, ty, init, local_index, attr
+                        }
+                    });
+
+                    if !self.test(TT_COMMA) { // TODO: Allow comma at the end?
+                        break;
+                    }
+                }
             } else if self.test(TT_USE) {
                 let name = self.check_ident()?;
                 let rel_index = self.uses.len() as u32;
                 self.uses.push(name.clone());
                 lambda.expr.push(Ast {
+                    loc: self.span(),
                     ty: AstType::None,
                     data: AstData::Use { name, rel_index }
                 });
@@ -985,7 +1062,7 @@ impl<'a> Parser<'a> {
                 lambda.expr.push(expr);
             }
 
-            if !self.test(TT_COMMA) {
+            if !self.test(TT_SEMICOLON) {
                 break;
             }
         }

@@ -5,7 +5,7 @@ let uniLocs
 let uniNames = ["t", "P", "R"]
 
 let fs = main_glsl.main
-let wasm_U8 = Uint8Array.new(wasm.memory.buffer)
+#let wasm_U8 = Uint8Array.new(wasm.memory.buffer)
 
 #console.log(wasm.RENDER_BUF)
 
@@ -63,11 +63,12 @@ fn startGame() {
     let pointTex = genTex(Uint32Array.new(16*16), render.GL_RGBA, getPointColor)
 
     let rot = 0.0
+    rot := x
     fn update() {
         window.requestAnimationFrame({ |currentTime|
             update()
-            render.w := canvas.width := window.innerWidth
-            render.h := canvas.height := window.innerHeight
+            render.canvas_w := canvas.width := window.innerWidth
+            render.canvas_h := canvas.height := window.innerHeight
             gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
             gl.clear(render.GL_COLOR_BUFFER_BIT)
             render.setView(0, 0, Math.cos(rot), Math.sin(rot), 1.0)
@@ -94,10 +95,10 @@ window.onload := { ||
     startGame()
 
     window.onkeydown := { |ev|
-        wasm_U8[wasm.KEYS + ev.keyCode] := 1
+        #wasm_U8[wasm.KEYS + ev.keyCode] := 1
     }
 
     window.onkeyup := { |ev|
-        wasm_U8[wasm.KEYS + ev.keyCode] := 0
+        #wasm_U8[wasm.KEYS + ev.keyCode] := 0
     }
 }

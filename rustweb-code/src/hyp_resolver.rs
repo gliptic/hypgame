@@ -7,7 +7,8 @@ pub struct Resolver<'a> {
     pub scope_locals: HashMap<Ident, Local>,
     pub scope_local_list: Vec<Ident>,
     pub current_module: usize,
-    pub module_infos: &'a mut Vec<ModuleInfo>
+    pub module_infos: &'a mut Vec<ModuleInfo>,
+    pub errors: Vec<ParseError>,
 }
 
 impl<'a> Resolver<'a> {
@@ -15,22 +16,35 @@ impl<'a> Resolver<'a> {
         current_module: usize,
         module_infos: &'a mut Vec<ModuleInfo>) -> Resolver {
 
-        let res = Resolver {
+        let mut res = Resolver {
             scope_locals: HashMap::new(),
             scope_local_list: Vec::new(),
             current_module,
-            module_infos
+            module_infos,
+            errors: Vec::new()
         };
 
-/*
         match res.module_infos[current_module].language {
             Language::Js => {},
             Language::Glsl => {
-                res.add_local(b"".to_owned(), );
+                res.add_local("vec2".to_owned(),
+                    Local::Builtin {
+                        name: "vec2".to_owned(),
+                        ty: AstType::Ctor(Box::new(AstType::Vec(Box::new(AstType::F32), 2)))
+                    });
+                res.add_local("mat2".to_owned(),
+                    Local::Builtin {
+                        name: "mat2".to_owned(),
+                        ty: AstType::Ctor(Box::new(AstType::Mat(Box::new(AstType::F32), 2, 2)))
+                    });
             }
-        }*/
+        }
 
         res
+    }
+
+    pub fn add_error(&mut self, ast: &Ast, s: &'static str) {
+        self.errors.push(ParseError(ast.loc, s));
     }
 
     pub fn begin_scope(&mut self) -> usize {
@@ -67,7 +81,7 @@ impl<'a> Resolver<'a> {
                             "float" => *ty = AstType::F32,
                             "int" => *ty = AstType::I32,
                             "vec2" => *ty = AstType::Vec(Box::new(AstType::F32), 2),
-                            "vec3" => *ty = AstType::Vec(Box::new(AstType::F32), 2),
+                            "vec3" => *ty = AstType::Vec(Box::new(AstType::F32), 3),
                             "vec4" => *ty = AstType::Vec(Box::new(AstType::F32), 4),
                             "mat2" | "mat2x2" => *ty = AstType::Mat(Box::new(AstType::F32), 2, 2),
                             "mat2x3" => *ty = AstType::Mat(Box::new(AstType::F32), 2, 3),
@@ -126,11 +140,12 @@ impl<'a> Resolver<'a> {
 
                 self.end_scope(local_count);
             }
-            AstData::LetLocal { name, init, local_index, .. } => {
+            AstData::LetLocal { name, init, local_index, ty: let_ty, .. } => {
                 
                 let ty;
                 if let Some(i) = init {
                     self.resolve_ast(i);
+                    //dbg!(&i.ty);
                     ty = i.ty.clone();
                 } else {
                     ty = AstType::None;
@@ -138,13 +153,15 @@ impl<'a> Resolver<'a> {
 
                 let mut local_type = std::mem::replace(&mut self.module_infos[self.current_module].locals[*local_index as usize].0, AstType::None);
 
-                if let AstType::None = &local_type {
+                if let AstType::Any = &local_type {
                     // No declared type, use init expression type
                     local_type = ty;
                 } else {
                     self.resolve_type(&mut local_type);
                 }
 
+                //dbg!(&local_type);
+                *let_ty = local_type.clone(); // TODO: This is temporary, backend should look at the type stored in 'locals'
                 std::mem::replace(&mut self.module_infos[self.current_module].locals[*local_index as usize].0, local_type);
                 
                 self.add_local(name.clone(), Local::Local { index: *local_index });
@@ -157,6 +174,10 @@ impl<'a> Resolver<'a> {
 
                 if let Some(local) = self.scope_locals.get(s) {
                     match local {
+                        Local::Builtin { ty, .. } => {
+                            //dbg!(ty);
+                            ast.ty = ty.clone();
+                        }
                         Local::Local { index } => {
                             ast.ty = self.module_infos[self.current_module].locals[*index as usize].0.clone();
                         }
@@ -228,6 +249,7 @@ impl<'a> Resolver<'a> {
                                 if let Some(&module_local_index) = self.module_infos[*abs_index as usize].exports_rev.get(s) {
                                     
                                     *ast = Ast {
+                                        loc: ast.loc,
                                         ty: AstType::Any,
                                         data: AstData::Local {
                                             local: Local::ModuleMember {
@@ -245,7 +267,10 @@ impl<'a> Resolver<'a> {
                             }
                         }
                     }
-                    _ => panic!("invalid field access {:?}", &member.data)
+                    _ => {
+                        self.add_error(&ast, "invalid field access");
+                        //panic!("invalid field access {:?}", &member.data)
+                    }
                 }
             }
             AstData::App { fun, params, .. } => {
@@ -254,7 +279,14 @@ impl<'a> Resolver<'a> {
                     self.resolve_ast(e);
                 }
 
-                // TODO: ast.type = return type from fun type
+                match &fun.ty {
+                    AstType::Ctor(box ret_ty) => {
+                        //dbg!(ret_ty);
+                        ast.ty = ret_ty.clone();
+                    }
+                    _ => {}
+                }
+                // TODO: ast.ty = return type from fun type
             }
             AstData::Local { .. } => {
                 

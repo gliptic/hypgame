@@ -224,6 +224,11 @@ impl GlslEnc {
                 //let index = self.module.exports.push(id);
 
                 let arg_names: Vec<String> = lambda.params.iter().map(|p| {
+                    /*
+                    match &p.pat {
+                        hyp::Pattern::Ident(name) => self.ident_to_str(&p.name),
+                        _ => panic!("pattern not allowed for glsl")
+                    }*/
                     self.ident_to_str(&p.name)
                 }).collect();
 
@@ -479,6 +484,8 @@ impl GlslEnc {
                 },
             hyp::AstData::Local { local } => {
                 match *local {
+                    hyp::Local::Builtin { ref name, .. } =>
+                        GlslAst::Path { segments: vec![name.clone()] },
                     hyp::Local::Local { index } =>
                         GlslAst::LocalRef { id: index },
                     _ => panic!("unimplemented local {:?}", local)

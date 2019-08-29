@@ -8,3 +8,5 @@ edition = "2018"
 
 [dependencies]
 rustweb_code = { path = "../rustweb-code" }
+notify = "=5.0.0-pre.1"
+crossbeam-channel = "*"
