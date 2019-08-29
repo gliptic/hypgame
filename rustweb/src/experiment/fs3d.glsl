@@ -73,12 +73,68 @@ vec3 sphereColor(vec3 dir) {
 	return vec3(starfield(dir));
 }
 
+float noise3(vec2 p) {
+	return sin(p.x)*sin(p.y);
+}
+
+const mat2 m = mat2(
+    0.80, 0.60,
+    -0.60, 0.80);
+
+float fbm4(vec2 p) {
+    float f = 0.0;
+    f += 0.5000*noise3(p); p = m*p*2.02;
+    f += 0.2500*noise3(p); p = m*p*2.03;
+    f += 0.1250*noise3(p); p = m*p*2.01;
+    f += 0.0625*noise3(p);
+    return f/0.9375;
+}
+
+float planet_pattern(vec2 p) {
+    //return fbm4(p.xz);
+
+    vec2 q = vec2( fbm4( p + vec2(0.0,0.0) ),
+                   fbm4( p + vec2(5.2,1.3) ) );
+
+    vec2 r = vec2( fbm4( p + 4.0*q + vec2(1.7,9.2) ),
+                   fbm4( p + 4.0*q + vec2(8.3,2.8) ) );
+
+    return fbm4( p + 4.0*r );
+}
+
 void main() {
-    vec3 sky = normalize(fsSkyPos.xyz);
+
+    vec3 rd = normalize(fsSkyPos.xyz);
+    vec3 ro = vec3(0);
+    vec3 center = vec3(0, 1000, 0);
+    float radius = 900.0*900.0;
+
+    float a = dot(rd,rd);
+    float b = 2.0 * dot(rd, center);
+    float c = dot(center, center) - radius;
+    vec3 skycol;
+
+    {
+        float h = rd.y * -0.5 + 0.5;
+
+        skycol = sphereColor(rd) +
+            mix(mix(vec3(0), vec3(0.2, 0.1, 0.43), h + 0.3),
+                vec3(0.08, 0.61, 0.83), h * 1.5 - 0.4);
+
+        float d = b*b - 4.0*a*c;
+        if (d > 0.0) {
+            float q = -0.5 * (b + (b > 0.0 ? sqrt(d) : -sqrt(d)));
+            float t = min(q / a, c / q);
+            if (t > 0.0) {
+                vec3 intersection = rd * t;
+                skycol = vec3(0.1, 0.2, 0.4) + vec3(0.0, 0.1, 0.4) * planet_pattern(intersection.xz * 0.05);
+            }
+        }
+    }
+
     //vec4 c = mix(skyhorizon, skytop, cos(sky.y * 50.0) * cos(sky.x * 50.0));
-    vec3 c = sphereColor(sky);
     //gl_FragColor = vec4(1.0 + 0.5 * cos(fsSkyPos.z * 10.0), c.gb, 1);
-    gl_FragColor = vec4(c, 1);
+    gl_FragColor = vec4(skycol, 1);
     //gl_FragColor = vec4(1, 1, 1, 1);
     //gl_FragColor = texture2D(s, fsTexcoord)*fsColor;
     //gl_FragColor = texture2D(s, fsTexcoord);

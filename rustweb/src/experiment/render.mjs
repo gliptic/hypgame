@@ -1,8 +1,8 @@
 import * as mat from './mat.mjs';
 
 export let gl
-export let w
-export let h
+export let canvas_w
+export let canvas_h
 export let viewTrans
 export let viewTrans3d
 export let viewPos3d
@@ -80,7 +80,7 @@ void main() {
 }`;
 
 let VERTEX_SIZE = (4 * 2) + (4 * 2) + (4)
-let VERTEX_SIZE3D = (4 * 3) + (4 * 2) + (4)
+let VERTEX_SIZE3D = (4 * 3) + (4 * 2) + (4 * 4)
 let MAX_BATCH = 10922
 let MAX_STACK = 100
 let MAT_SIZE = 6
@@ -100,13 +100,8 @@ let vColorData = new Uint32Array(vertexData)
 let vertexData3d = new ArrayBuffer(VERTEX_DATA_SIZE3D)
 let vPositionData3d = new Float32Array(vertexData3d)
 let vColorData3d = new Uint32Array(vertexData3d)
-let mat0 = 1
-let mat1 = 0
-let mat2 = 0
-let mat3 = 1
-let mat4 = 0
-let mat5 = 0
-let stack = []
+
+let arrPositionData3d = [];
 let locPos = 0
 let locUV = 1
 let locColor = 2
@@ -119,8 +114,8 @@ export function initGl(canvas) {
 }
 
 export function updateWindow(canvas) {
-    w = canvas.width = window.innerWidth;
-    h = canvas.height = window.innerHeight;
+    canvas_w = canvas.width = window.innerWidth;
+    canvas_h = canvas.height = window.innerHeight;
 }
 
 export function createBuffer(bufferType, size, usage) {
@@ -154,8 +149,8 @@ export function setViewTransform(shader) {
 export function setViewTransform3d(shader) {
     gl.uniformMatrix4fv(gl.getUniformLocation(shader, "modelView"), 0, viewTrans3d)
 
-    //var p = perspective3d(1.58, w / h, 1, 3000);
-    var p = mat.perspective3d(1, w / h, 1, 30000);
+    //var p = perspective3d(1.58, canvas_w / canvas_h, 1, 3000);
+    var p = mat.perspective3d(1, canvas_w / canvas_h, 1, 30000);
     gl.uniformMatrix4fv(gl.getUniformLocation(shader, "projection"), 0, p)
 
     //gl.uniformMatrix3fv(gl.getUniformLocation(shader, "viewPos"), 0, viewPos)
@@ -167,7 +162,7 @@ export function color(c) {
 }
 
 export function setView(x, y, rotx, roty, zoom) {
-    let ratio = h / w
+    let ratio = canvas_h / canvas_w
 
     viewTrans = [
         1, 0, 0,
@@ -228,35 +223,27 @@ export function flush() {
 }
 
 export function flush3d() {
-    if (count) {
+    if (arrPositionData3d.length) {
         gl.bindBuffer(GL_ARRAY_BUFFER, VBO3D)
         checkErr(gl.vertexAttribPointer(locPos, 3, GL_FLOAT, 0, VERTEX_SIZE3D, 0))
         checkErr(gl.vertexAttribPointer(locUV, 2, GL_FLOAT, 0, VERTEX_SIZE3D, 12))
-        checkErr(gl.vertexAttribPointer(locColor, 4, GL_UNSIGNED_BYTE, 1, VERTEX_SIZE3D, 20))
-        gl.bufferSubData(GL_ARRAY_BUFFER, 0, vPositionData3d.subarray(0, count * QUAD_SIZE_IN_WORDS3D))
-        gl.drawArrays(GL_TRIANGLES, 0, count * VERTICES_PER_QUAD)
-        count = 0
+        checkErr(gl.vertexAttribPointer(locColor, 4, GL_FLOAT, 0, VERTEX_SIZE3D, 20))
+        gl.bufferSubData(GL_ARRAY_BUFFER, 0, new Float32Array(arrPositionData3d));
+        //console.log(arrPositionData3d.length, arrPositionData3d.length / (VERTEX_SIZE3D / 4));
+        gl.drawArrays(GL_TRIANGLES, 0, arrPositionData3d.length / (VERTEX_SIZE3D / 4))
+        arrPositionData3d.length = 0;
     }
     currentTexture = null
 }
 
-export function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
-    let x0 = x
-    let y0 = y
-    let z0 = z
-    let x1 = x + w_
-    let y1 = y + h_
-    let z1 = z
-    let x2 = x
-    let y2 = y + h_
-    let z2 = z;
-    let x3 = x + w_
-    let y3 = y
-    let z3 = z
-    let offset = 0
-    let argb = col
+export function img3d(texture, x, y, z, w, h, u0, v0, u1, v1) {
+    let x0 = x,     y0 = y,     z0 = z;
+    let x1 = x + w, y1 = y + h, z1 = z;
+    let x2 = x,     y2 = y + h, z2 = z;
+    let x3 = x + w, y3 = y,     z3 = z;
+    let abgr = col
 
-    if (texture != currentTexture || count + 1 >= MAX_BATCH) {
+    if (texture != currentTexture) {
         flush3d()
         if (currentTexture != texture) {
             currentTexture = texture
@@ -264,59 +251,52 @@ export function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
         }
     }
 
-    offset = count * QUAD_SIZE_IN_WORDS3D - 1
-    // Vertex Order
-    // Vertex Position | UV | ARGB
-    // Vertex 1
-    vPositionData3d[++offset] = x0
-    vPositionData3d[++offset] = y0
-    vPositionData3d[++offset] = z0;
-    vPositionData3d[++offset] = u0
-    vPositionData3d[++offset] = v0
-    vColorData3d[++offset] = argb
+    var a = (abgr >>> 24) / 255;
+    var b = ((abgr >> 16) & 0xff) / 255;
+    var g = ((abgr >> 8) & 0xff) / 255;
+    var r = (abgr & 0xff) / 255;
 
-    // Vertex 4
-    vPositionData3d[++offset] = x3
-    vPositionData3d[++offset] = y3
-    vPositionData3d[++offset] = z3;
-    vPositionData3d[++offset] = u1
-    vPositionData3d[++offset] = v0
-    vColorData3d[++offset] = argb
-    
-    // Vertex 2
-    vPositionData3d[++offset] = x1
-    vPositionData3d[++offset] = y1
-    vPositionData3d[++offset] = z1;
-    vPositionData3d[++offset] = u1
-    vPositionData3d[++offset] = v1
-    vColorData3d[++offset] = argb
+    if (arrPositionData3d.push(
+        x0,y0,z0,u0,v0,r,g,b,a,
+        x3,y3,z3,u1,v0,r,g,b,a,
+        x1,y1,z1,u1,v1,r,g,b,a,
+        x0,y0,z0,u0,v0,r,g,b,a,
+        x1,y1,z1,u1,v1,r,g,b,a,
+        x2,y2,z2,u0,v1,r,g,b,a) >= MAX_BATCH * QUAD_SIZE_IN_WORDS3D) {
 
-    // Vertex 1
-    vPositionData3d[++offset] = x0
-    vPositionData3d[++offset] = y0
-    vPositionData3d[++offset] = z0;
-    vPositionData3d[++offset] = u0
-    vPositionData3d[++offset] = v0
-    vColorData3d[++offset] = argb
+        flush3d();
+    }
+}
 
-    // Vertex 2
-    vPositionData3d[++offset] = x1
-    vPositionData3d[++offset] = y1
-    vPositionData3d[++offset] = z1;
-    vPositionData3d[++offset] = u1
-    vPositionData3d[++offset] = v1
-    vColorData3d[++offset] = argb
-    
-    // Vertex 3
-    vPositionData3d[++offset] = x2
-    vPositionData3d[++offset] = y2
-    vPositionData3d[++offset] = z2;
-    vPositionData3d[++offset] = u0
-    vPositionData3d[++offset] = v1
-    vColorData3d[++offset] = argb
-    
-    if (++count >= MAX_BATCH) {
+export function wall3d(texture, fx0, fz0, fx1, fz1, fy, cy, u0, v0, u1, v1) {
+    let x0 = fx0,     y0 = fy,     z0 = fz0;
+    let x1 = fx1,     y1 = fy,     z1 = fz1;
+    let x2 = fx1,     y2 = cy,     z2 = fz1;
+    let x3 = fx0,     y3 = cy,     z3 = fz0;
+    let abgr = col
+
+    if (texture != currentTexture) {
         flush3d()
+        if (currentTexture != texture) {
+            currentTexture = texture
+            gl.bindTexture(GL_TEXTURE_2D, currentTexture)
+        }
+    }
+
+    var a = (abgr >>> 24) / 255;
+    var b = ((abgr >> 16) & 0xff) / 255;
+    var g = ((abgr >> 8) & 0xff) / 255;
+    var r = (abgr & 0xff) / 255;
+
+    if (arrPositionData3d.push(
+        x0,y0,z0,u0,v1,r,g,b,a,
+        x1,y1,z1,u1,v1,r,g,b,a,
+        x3,y3,z3,u0,v0,r,g,b,a,
+        x1,y1,z1,u1,v1,r,g,b,a,
+        x2,y2,z2,u1,v0,r,g,b,a,
+        x3,y3,z3,u0,v0,r,g,b,a) >= MAX_BATCH * QUAD_SIZE_IN_WORDS3D) {
+
+        flush3d();
     }
 }
 

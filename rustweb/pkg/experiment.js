@@ -243,13 +243,6 @@ let vPositionData3d = new Float32Array(vertexData3d)
 let vColorData3d = new Uint32Array(vertexData3d)
 
 let arrPositionData3d = [];
-let mat0 = 1
-let mat1 = 0
-let mat2 = 0
-let mat3 = 1
-let mat4 = 0
-let mat5 = 0
-let stack = []
 let locPos = 0
 let locUV = 1
 let locColor = 2
@@ -320,32 +313,8 @@ function setView(x, y, rotx, roty, zoom) {
 
 function setView3d(roty, rotx, tx, ty, zoom) {
 
-    /*
-    viewTrans3d = [
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-    ]*/
-
-    /*
-             1 0 0 0,
-             0 1 0 0,
-             0 0 1 0,
-             x y z 1
-    a b c 0  a b c 0
-    e f g 0  e f g 0
-    i j k 0  i j k 0
-    m n o p  m+x n+y o+z p
-    */
-
     var a = mulmat3d(rotx3d(rotx), roty3d(roty));
     viewTrans3d = mulmat3d(a, trans3d(tx, 0, ty));
-    //console.log(a)
-    //console.log(viewTrans3d)
-    //viewTrans3d = mulmat3d(rotx3d(rotx), roty3d(roty));
-    //viewTrans3d[12] += tx;
-    //viewTrans3d[14] += ty;
     viewPos3d = [tx, 0, ty]
 
     scale3d(viewTrans3d, 1 / zoom, 1 / zoom, 1 / zoom);
@@ -410,82 +379,6 @@ function img3d(texture, x, y, z, w_, h_, u0, v0, u1, v1) {
     var b = ((abgr >> 16) & 0xff) / 255;
     var g = ((abgr >> 8) & 0xff) / 255;
     var r = (abgr & 0xff) / 255;
-
-    /*
-    offset = count * QUAD_SIZE_IN_WORDS3D - 1
-    // Vertex Order
-    // Vertex Position | UV | ARGB
-    // Vertex 1
-    vPositionData3d[++offset] = x0
-    vPositionData3d[++offset] = y0
-    vPositionData3d[++offset] = z0;
-    vPositionData3d[++offset] = u0
-    vPositionData3d[++offset] = v0
-    //vColorData3d[++offset] = argb
-    vPositionData3d[++offset] = r;
-    vPositionData3d[++offset] = g;
-    vPositionData3d[++offset] = b;
-    vPositionData3d[++offset] = a;
-
-    // Vertex 4
-    vPositionData3d[++offset] = x3
-    vPositionData3d[++offset] = y3
-    vPositionData3d[++offset] = z3;
-    vPositionData3d[++offset] = u1
-    vPositionData3d[++offset] = v0
-    //vColorData3d[++offset] = argb
-    vPositionData3d[++offset] = r;
-    vPositionData3d[++offset] = g;
-    vPositionData3d[++offset] = b;
-    vPositionData3d[++offset] = a;
-    
-    // Vertex 2
-    vPositionData3d[++offset] = x1
-    vPositionData3d[++offset] = y1
-    vPositionData3d[++offset] = z1;
-    vPositionData3d[++offset] = u1
-    vPositionData3d[++offset] = v1
-    //vColorData3d[++offset] = argb
-    vPositionData3d[++offset] = r;
-    vPositionData3d[++offset] = g;
-    vPositionData3d[++offset] = b;
-    vPositionData3d[++offset] = a;
-
-    // Vertex 1
-    vPositionData3d[++offset] = x0
-    vPositionData3d[++offset] = y0
-    vPositionData3d[++offset] = z0;
-    vPositionData3d[++offset] = u0
-    vPositionData3d[++offset] = v0
-    //vColorData3d[++offset] = argb
-    vPositionData3d[++offset] = r;
-    vPositionData3d[++offset] = g;
-    vPositionData3d[++offset] = b;
-    vPositionData3d[++offset] = a;
-
-    // Vertex 2
-    vPositionData3d[++offset] = x1
-    vPositionData3d[++offset] = y1
-    vPositionData3d[++offset] = z1;
-    vPositionData3d[++offset] = u1
-    vPositionData3d[++offset] = v1
-    //vColorData3d[++offset] = argb
-    vPositionData3d[++offset] = r;
-    vPositionData3d[++offset] = g;
-    vPositionData3d[++offset] = b;
-    vPositionData3d[++offset] = a;
-    
-    // Vertex 3
-    vPositionData3d[++offset] = x2
-    vPositionData3d[++offset] = y2
-    vPositionData3d[++offset] = z2;
-    vPositionData3d[++offset] = u0
-    vPositionData3d[++offset] = v1
-    //vColorData3d[++offset] = argb
-    vPositionData3d[++offset] = r;
-    vPositionData3d[++offset] = g;
-    vPositionData3d[++offset] = b;
-    vPositionData3d[++offset] = a;*/
 
     if (arrPositionData3d.push(
         x0,y0,z0,u0,v0,r,g,b,a,

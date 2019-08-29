@@ -548,17 +548,19 @@ export async function startGame() {
                 //setView3d(rotx / 10, 1.0);
                 render.setView3d(roty, rotx, posx, posy, 1.0);
                 //render.activateShader3d(shader3d);
-                render.activateShader3d(keyShader);
+                render.activateShader3d(shader3d);
 
                 render.color(0xff770077);
                 for (var x = -10000; x < 10000; x += 512 * 2 * 1.5) {
-                    render.img3d(pointTex, x, -256 * 4, -2500, 512 * 2, 512 * 4, 0, 0, 1, 1);
+                    //render.img3d(pointTex, x, -256 * 4, -2500, 512 * 2, 512 * 4, 0, 0, 1, 1);
+                    var z = -2500;
+                    render.wall3d(pointTex, x, z, x + 512 * 2, z, -256 * 4, 256 * 4, 0, 0, 1, 1);
                 }
-                //img3d(null, -0.5, -0.5, 0.1, 1, 1, 0, 0, 1, 1);
+
                 render.flush3d();
             }
 
-            {
+            if (false) {
                 render.setView(0, 0, 1, 0, 1.0);
                 //t += 0.01;
                 render.activateShader(sdfShader);
