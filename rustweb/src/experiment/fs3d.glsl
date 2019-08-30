@@ -3,13 +3,14 @@ varying vec4 fsColor;
 varying vec4 fsPos;
 varying vec4 fsSkyPos;
 uniform sampler2D s;
+uniform float time;
 
 const vec4 skytop = vec4(0.0, 0.0, 0.5, 1.0);
 const vec4 skyhorizon = vec4(0.3294, 0.92157, 1.0, 1.0);
 
 float hash2(vec2 co) { return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453); }
 
-float starplane(vec3 dir) { 
+float starplane(vec3 dir, float smallProb) { 
     float screenscale = 1.0 / 700.0;
 
     // Project to a cube-map plane and scale with the resolution of the display
@@ -46,10 +47,10 @@ float starplane(vec3 dir) {
     // Stabilize stars under motion by locking to a grid
     basePos = floor(basePos);
 
-    if (hash2(basePos.xy * screenscale) > 0.997) {
+    if (hash2(basePos.xy * screenscale) > smallProb) {
         float r = hash2(basePos.xy * 0.5);
-        const float iTime = 0.0;
-        color += r * (0.3 * sin(iTime * (r * 5.0) + r) + 0.7) * 1.5;
+        //const float iTime = 0.0;
+        color += r * (0.3 * sin(time * 5.0 * (r * 5.0) + r) + 0.7) * 1.5;
     }
 	
     // Weight by the z-plane
@@ -61,16 +62,16 @@ const float deg = pi / 180.0;
 
 mat3 rotation(float yaw, float pitch) { return mat3(cos(yaw), 0, -sin(yaw), 0, 1, 0, sin(yaw), 0, cos(yaw)) * mat3(1, 0, 0, 0, cos(pitch), sin(pitch), 0, -sin(pitch), cos(pitch)); }
 
-float starbox(vec3 dir) {
-	return starplane(dir.xyz) + starplane(dir.yzx) + starplane(dir.zxy);
+float starbox(vec3 dir, float smallProb) {
+	return starplane(dir.xyz, smallProb) + starplane(dir.yzx, smallProb) + starplane(dir.zxy, smallProb);
 }
 
-float starfield(vec3 dir) {
-    return starbox(dir) + starbox(rotation(45.0 * deg, 45.0 * deg) * dir);
+float starfield(vec3 dir, float smallProb) {
+    return starbox(dir, smallProb) + starbox(rotation(45.0 * deg, 45.0 * deg) * dir, smallProb);
 }
 
-vec3 sphereColor(vec3 dir) {
-	return vec3(starfield(dir));
+vec3 sphereColor(vec3 dir, float smallProb) {
+	return vec3(starfield(dir, smallProb));
 }
 
 float noise3(vec2 p) {
@@ -90,7 +91,7 @@ float fbm4(vec2 p) {
     return f/0.9375;
 }
 
-float planet_pattern(vec2 p) {
+float planet_pattern(vec2 p, float t) {
     //return fbm4(p.xz);
 
     vec2 q = vec2( fbm4( p + vec2(0.0,0.0) ),
@@ -99,7 +100,7 @@ float planet_pattern(vec2 p) {
     vec2 r = vec2( fbm4( p + 4.0*q + vec2(1.7,9.2) ),
                    fbm4( p + 4.0*q + vec2(8.3,2.8) ) );
 
-    return fbm4( p + 4.0*r );
+    return fbm4( p + 4.0*r + t );
 }
 
 void main() {
@@ -109,25 +110,23 @@ void main() {
     vec3 center = vec3(0, 1000, 0);
     float radius = 900.0*900.0;
 
-    float a = dot(rd,rd);
-    float b = 2.0 * dot(rd, center);
-    float c = dot(center, center) - radius;
     vec3 skycol;
 
     {
         float h = rd.y * -0.5 + 0.5;
 
-        skycol = sphereColor(rd) +
+        skycol = sphereColor(rd, 0.997) + //, 0.997 + sin(rd.x + rd.y + time * 100.0) * 0.001) +
             mix(mix(vec3(0), vec3(0.2, 0.1, 0.43), h + 0.3),
                 vec3(0.08, 0.61, 0.83), h * 1.5 - 0.4);
 
-        float d = b*b - 4.0*a*c;
+        float b = dot(rd, center);
+        float c = dot(center, center) - radius;
+        float d = b*b - c;
         if (d > 0.0) {
-            float q = -0.5 * (b + (b > 0.0 ? sqrt(d) : -sqrt(d)));
-            float t = min(q / a, c / q);
+            float t = -sqrt(d) - b;
             if (t > 0.0) {
                 vec3 intersection = rd * t;
-                skycol = vec3(0.1, 0.2, 0.4) + vec3(0.0, 0.1, 0.4) * planet_pattern(intersection.xz * 0.05);
+                skycol = vec3(0.1, 0.2, 0.4) + vec3(0.0, 0.1, 0.4) * planet_pattern(intersection.xz * 0.05, time);
             }
         }
     }

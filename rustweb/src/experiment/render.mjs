@@ -52,7 +52,7 @@ void main() {
     d=b;
     e=c;
     f=a;
-    gl_Position=vec4(m*vec3(a,1.),1.);
+    gl_Position = vec4((m*vec3(a,1.)).xy,1.,1.);
 }`;
 
 export let vs3d = `
@@ -130,7 +130,9 @@ export function createTexture(image, side, ty) {
     checkErr(gl.bindTexture(GL_TEXTURE_2D, texture))
     checkErr(gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE))
     checkErr(gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE))
-    checkErr(gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR))
+    //checkErr(gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR))
+    checkErr(gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST))
+    checkErr(gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST))
     checkErr(gl.texImage2D(GL_TEXTURE_2D, 0, ty, side, side, 0, ty, GL_UNSIGNED_BYTE, new Uint8Array(image.buffer)))
     console.log("texImage")
     return texture
@@ -146,15 +148,17 @@ export function setViewTransform(shader) {
     gl.uniformMatrix3fv(gl.getUniformLocation(shader, "m"), 0, viewTrans)
 }
 
-export function setViewTransform3d(shader) {
+export function setViewTransform3d(shader, time) {
     gl.uniformMatrix4fv(gl.getUniformLocation(shader, "modelView"), 0, viewTrans3d)
 
     //var p = perspective3d(1.58, canvas_w / canvas_h, 1, 3000);
-    var p = mat.perspective3d(1, canvas_w / canvas_h, 1, 30000);
-    gl.uniformMatrix4fv(gl.getUniformLocation(shader, "projection"), 0, p)
+    //var p = mat.perspective3d(1, canvas_w / canvas_h, 1, 30000);
+    //gl.uniformMatrix4fv(gl.getUniformLocation(shader, "projection"), 0, p)
+    gl.uniform1f(gl.getUniformLocation(shader, "invAr"), canvas_h / canvas_w);
 
     //gl.uniformMatrix3fv(gl.getUniformLocation(shader, "viewPos"), 0, viewPos)
-    gl.uniform3fv(gl.getUniformLocation(shader, "viewPos"), viewPos3d)
+    gl.uniform3fv(gl.getUniformLocation(shader, "viewPos"), viewPos3d);
+    gl.uniform1f(gl.getUniformLocation(shader, 'time'), time);
 }
 
 export function color(c) {
@@ -198,6 +202,7 @@ export function setView3d(roty, rotx, tx, ty, zoom) {
 
     var a = mat.mulmat3d(mat.rotx3d(rotx), mat.roty3d(roty));
     viewTrans3d = mat.mulmat3d(a, mat.trans3d(tx, 0, ty));
+    //viewTrans3d[0] *= canvas_h / canvas_w;
     //console.log(a)
     //console.log(viewTrans3d)
     //viewTrans3d = mulmat3d(rotx3d(rotx), roty3d(roty));
@@ -375,9 +380,9 @@ export function activateShader(shader) {
     setViewTransform(shader)
 }
 
-export function activateShader3d(shader) {
+export function activateShader3d(shader, time) {
     gl.useProgram(shader)
-    setViewTransform3d(shader)
+    setViewTransform3d(shader, time)
     gl.uniform1i(gl.getUniformLocation(shader, 's'), 0);
 }
 
@@ -447,6 +452,8 @@ export function init(canvas) {
     //gl.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(GL_BLEND)
+    //gl.enable(gl.CULL_FACE)
+    //gl.enable(gl.DEPTH_TEST)
 
     gl.getExtension("OES_standard_derivatives")
     

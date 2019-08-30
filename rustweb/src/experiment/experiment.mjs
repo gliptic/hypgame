@@ -410,7 +410,7 @@ async function getText(p) {
 export async function startGame() {
     let sdfShader;
     let imgShader;
-    let shader3d, keyShader;
+    let shader3d, keyShader, wallShader;
     let gl;
     let canvas = document.getElementById("g");
     
@@ -418,6 +418,7 @@ export async function startGame() {
     gl = render.gl;
 
     let fs3d = await getText(fetch('./fs3d.glsl'));
+    let wall = await getText(fetch('./wall.glsl'));
     let key = await getText(fetch('./key.glsl'));
     let fs = await getText(fetch('./fs2d.glsl'));
     let fsImg = await getText(fetch('./fs_img.glsl'));
@@ -427,6 +428,7 @@ export async function startGame() {
     imgShader = render.createShaderProgram(render.basicVs, fsImg);
     shader3d = render.createShaderProgram(vs3d, fs3d, true);
     keyShader = render.createShaderProgram(vs3d, key, true);
+    wallShader = render.createShaderProgram(vs3d, wall, true);
     //console.log('uniform s:', gl.getUniformLocation(shader3d, 's'));
     //uniLocs = uniNames.map(|name| { return gl.getUniformLocation(imgShader, name) });
     //console.log();
@@ -436,6 +438,22 @@ export async function startGame() {
         return 0x00ffffff + (clamp(alpha, 0, 255) << 24);
         //return 0x001010ff + (clamp(alpha, 0, 255) << 24);
         //return 0xff00ff00;
+    }
+
+    var fontBits = atob('1tb7v+b97tm0mua3bd+RTdi2aZKKzd+2UduWlfRd/5f+v7j8XS+1l1SFZFO2adKqTd98VPUq08c9X+c97tW3ijtZrQ4=')
+        .split('')
+        .map(x => x.charCodeAt(0));
+
+    function getFontColor(x, y) {
+        if (x < 36*3 && y < 5) {
+            let pos = y * 36 * 3 + x;
+            if ((fontBits[pos >> 3] >> (pos & 7)) & 1) {
+                return 0xffffffff;
+            } else {
+                return 0;
+            }
+        }
+        return 0;
     }
 
     // 16x16
@@ -490,6 +508,7 @@ export async function startGame() {
 
     let pointTex = genTex(new Uint32Array(128*128), render.GL_RGBA, getPointColor);
     let whiteTex = genTex(new Uint32Array(1), render.GL_RGBA, () => 0xffffffff);
+    let fontTex = genTex(new Uint32Array(128*128), render.GL_RGBA, getFontColor);
     //let pointTex = genTex(new Uint32Array(512*512), GL_RGBA, rkey);
 
     var rotx = 0.0;
@@ -519,7 +538,7 @@ export async function startGame() {
     // 68 left
     // 84 right
 
-    let t = 10.0;
+    let t = 0.0;
     function update() {
         window.requestAnimationFrame(function(currentTime) {
             update();
@@ -544,20 +563,56 @@ export async function startGame() {
                     posx -= Math.cos(roty) * walkSpeed;
                     posy += Math.sin(roty) * walkSpeed;
                 }
-                //t += 5;
+                t += 0.01;
                 //setView3d(rotx / 10, 1.0);
                 render.setView3d(roty, rotx, posx, posy, 1.0);
                 //render.activateShader3d(shader3d);
-                render.activateShader3d(shader3d);
+                //render.activateShader3d(shader3d, t);
+                render.activateShader3d(wallShader, t);
 
                 render.color(0xff770077);
                 for (var x = -10000; x < 10000; x += 512 * 2 * 1.5) {
-                    //render.img3d(pointTex, x, -256 * 4, -2500, 512 * 2, 512 * 4, 0, 0, 1, 1);
                     var z = -2500;
-                    render.wall3d(pointTex, x, z, x + 512 * 2, z, -256 * 4, 256 * 4, 0, 0, 1, 1);
+                    var step = 512 * 2;
+                    render.wall3d(pointTex, x + step, z, x, z, -step, step, 0, 0, 1, 1);
+                    render.wall3d(pointTex, x, z, x, z + step, -step, step, 0, 0, 1, 1);
+                    render.wall3d(pointTex, x + step, z + step, x + step, z, -step, step, 0, 0, 1, 1);
+                    render.wall3d(pointTex, x, z + step, x + step, z + step, -step, step, 0, 0, 1, 1);
                 }
 
                 render.flush3d();
+            }
+
+            if (true) {
+                render.setView(0, 0, 1, 0, 1.0);
+                render.activateShader(imgShader);
+                //render.color(0x00ff00ff);
+                render.color(0xffffffff);
+                var text = 'WARNING UWAGA';
+                var x = -256;
+                for (var i = 0; i < text.length; ++i) {
+                    var ch = text.charCodeAt(i);
+                    var id = -1;
+                    if (ch >= 40 && ch <= 49){
+                        id = ch - 49;
+                    } else if (ch >= 65 && ch <= 90) {
+                        id = ch - 65 + 10;
+                    }
+
+                    if (id >= 0) {
+                        let tx = (0.05 + id * 3) / 128;
+                        let pitchx = 2.9 / 128;
+                        let pitchy = 4.9 / 128;
+                        let ty = 0;
+                        render.img(fontTex, x, 128, 10, -10*5/3, tx, ty, tx + pitchx, ty + pitchy);
+
+                        x += 12;
+                    } else {
+                        x += 3;
+                    }
+                    
+                }
+                render.flush();
             }
 
             if (false) {
