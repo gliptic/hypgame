@@ -124,10 +124,10 @@ void main() {
         float d = b*b - c;
         if (d > 0.0) {
             float t = -sqrt(d) - b;
-            if (t > 0.0) {
+            //if (t > 0.0) {
                 vec3 intersection = rd * t;
                 skycol = vec3(0.1, 0.2, 0.4) + vec3(0.0, 0.1, 0.4) * planet_pattern(intersection.xz * 0.05, time);
-            }
+            //}
         }
     }
 

@@ -1,8 +1,8 @@
-use main_glsl
+use "glsl/main" as main_glsl
 use render
 
-let uniLocs
-let uniNames = ["t", "P", "R"]
+#let uniLocs
+#let uniNames = ["t", "P", "R"]
 
 let fs = main_glsl.main
 #let wasm_U8 = Uint8Array.new(wasm.memory.buffer)
@@ -13,11 +13,10 @@ fn genTex(pixels, ty, f) {
     let side = Math.sqrt(pixels.length)
     let w = side
     let h = side
-    let i = 0
-    let y = 0
+    var i = 0, y = 0
 
     while y < h {
-        let x = 0
+        var x = 0
         while x < w {
             pixels[i] := f(x, y)
             x += 1
@@ -27,6 +26,9 @@ fn genTex(pixels, ty, f) {
     }
 
     let pixtex = render.createTexture(pixels, side, ty)
+
+    console.log(pixels)
+
     pixtex.d := pixels
     return pixtex
 }
@@ -42,8 +44,7 @@ fn clamp(x, min, max) {
 }
 
 fn startGame() {
-    let gl
-    let imgShader
+    let gl, imgShader
     let canvas = document.getElementById("g")
     #let canvas = document.getElementsByTagName("canvas")[0]
     
@@ -53,7 +54,7 @@ fn startGame() {
     imgShader := render.createShaderProgram(render.basicVs, fs)
     #uniLocs := uniNames.map(|name| { return gl.getUniformLocation(imgShader, name) })
     #console.log()
-    
+
     fn getPointColor(x, y) {
         let alpha = ((7.5 - Math.hypot(x - 8, y - 8)) * 64.0) | 0
         #return 0x00ffffff + (clamp(alpha, 0, 255) << 24)
@@ -61,20 +62,29 @@ fn startGame() {
     }
 
     let pointTex = genTex(Uint32Array.new(16*16), render.GL_RGBA, getPointColor)
+    let whiteTex = genTex(Uint32Array.new(1), render.GL_RGBA, { return 0xffffffff });
 
-    let rot = 0.0
-    rot := x
+    #let rot = 0.0
+
     fn update() {
         window.requestAnimationFrame({ |currentTime|
-            update()
+            #update()
+            console.log("rendering")
             render.canvas_w := canvas.width := window.innerWidth
             render.canvas_h := canvas.height := window.innerHeight
             gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
             gl.clear(render.GL_COLOR_BUFFER_BIT)
-            render.setView(0, 0, Math.cos(rot), Math.sin(rot), 1.0)
+            #render.setView(0, 0, Math.cos(rot), Math.sin(rot), 1.0)
             #rot += 0.01
+            render.color(0xffffffff)
             render.activateShader(imgShader)
-            render.img_simple(Math.random(), Math.random(), 0xffffffff)
+            let z = -2500
+            render.wall3d(pointTex, -1000, z, 1000, z, -1024, 1024,
+                0, 0, 1, 1)
+            render.flush()
+
+            #render.img_simple2(Math.random(), Math.random(), 0xffffffff)
+#[
             if (false) {
                 #render.color(0xffff1010)
                 render.color(0xffffffff)
@@ -85,6 +95,7 @@ fn startGame() {
                 gl.bindTexture(render.GL_TEXTURE_2D, pointTex)
                 wasm.rend()
             }
+]
         })
     }
 

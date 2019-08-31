@@ -38,6 +38,7 @@ impl<'a> Resolver<'a> {
                         ty: AstType::Ctor(Box::new(AstType::Mat(Box::new(AstType::F32), 2, 2)))
                     });
             }
+            Language::Binary => {}
         }
 
         res
@@ -103,9 +104,14 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn resolve_lambda(&mut self, lambda: &mut AstLambda) -> AstType {
-        for ParamDef { name, ty, local_index } in &mut lambda.params {
+        for ParamDef { ty, .. } in &mut lambda.params {
             self.resolve_type(ty);
-            self.add_local(name.clone(), Local::Local { index: *local_index });
+        }
+
+        for &local_index in &lambda.param_locals {
+            let name = &self.module_infos[self.current_module].locals[local_index as usize].1;
+            let cloned_name = name.clone();
+            self.add_local(cloned_name, Local::Local { index: local_index });
         }
 
         self.resolve_type(&mut lambda.return_type);

@@ -1,4 +1,4 @@
-use crate::{JsAst, JsLit, JsOp, JsUnop, JsBuiltin};
+use crate::{JsAst, JsLit, JsOp, JsUnop, JsBuiltin, JsPattern};
 //use crate::glsl_bundler::{self, GlslBundler, GlslCollection};
 use crate::hyp_parser::{ModuleInfo, Ident, Language, AstLambda};
 use crate::{hyp_to_glsl, glsl_bundler};
@@ -232,6 +232,39 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
         ident.clone()
     }
 
+    pub fn pattern_to_js(&mut self, pat: &JsPattern) {
+        match pat {
+            JsPattern::Local(i) => {
+                let param_name = &self.module_infos[self.current_module].locals[*i as usize].1;
+                self.buf.push_str(param_name);
+            }
+            JsPattern::Array(subpats) => {
+                self.buf.push_str("[");
+                let mut first = true;
+                for e in subpats {
+                    if first {
+                        first = false;
+                    } else {
+                        self.buf.push_str(", ");
+                    }
+                    self.pattern_to_js(e);
+                }
+                self.buf.push_str("]");
+            }
+        }
+    }
+
+    pub fn binary_to_js(&mut self) {
+        let mi = &self.module_infos[self.current_module];
+        self.buf.push_str("var ");
+        self.buf.push_str(&mi.name);
+        self.buf.push_str(" = ");
+        self.buf.push_str("\"");
+        // TODO: Remove unnecessary = at the end
+        base64::encode_config_buf(&mi.src, base64::STANDARD, &mut self.buf);
+        self.buf.push_str("\";");
+    }
+
     pub fn to_js(&mut self, ast: &JsAst, slot: Prec) -> NeedSemi {
         match ast {
             JsAst::Fn { index, expr, args, .. } => {
@@ -246,8 +279,9 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     } else {
                         self.buf.push_str(", ");
                     }
-                    let param_name = &self.module_infos[self.current_module].locals[*i as usize].1;
-                    self.buf.push_str(param_name);
+                    //let param_name = &self.module_infos[self.current_module].locals[*i as usize].1;
+                    //self.buf.push_str(param_name);
+                    self.pattern_to_js(i);
                 }
                 self.buf.push_str(") ");
                 self.to_js(&expr, PREC_MAX);
@@ -492,7 +526,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     JsOp::BitXor => PREC_BITXOR,
                     JsOp::AndAnd => PREC_ANDAND,
                     JsOp::OrOr => PREC_OROR,
-                    JsOp::Shl | JsOp::Shr => PREC_SHIFT,
+                    JsOp::Shl | JsOp::Shr | JsOp::Lshr => PREC_SHIFT,
 
                 };
 
@@ -516,6 +550,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     JsOp::OrOr => " || ",
                     JsOp::Shl => " << ",
                     JsOp::Shr => " >> ",
+                    JsOp::Lshr => " >>> ",
                     JsOp::Eq => " === ",
                     JsOp::Lt => " < ",
                     JsOp::Le => " <= ",
@@ -557,11 +592,16 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                         }
                     }
                     _ => {
-                        let p = self.wrap_p(slot, PREC_DOT_BRACKET);
-                        self.to_js(base, PREC_DOT_BRACKET.on_left());
-                        self.buf.push('.');
-                        self.buf.push_str(member);
-                        self.unwrap_p(p);
+                        if member == "new" {
+                            self.buf.push_str("new ");
+                            self.to_js(base, PREC_NEW.on_left());
+                        } else {
+                            let p = self.wrap_p(slot, PREC_DOT_BRACKET);
+                            self.to_js(base, PREC_DOT_BRACKET.on_left());
+                            self.buf.push('.');
+                            self.buf.push_str(member);
+                            self.unwrap_p(p);
+                        }
                     }
                 }
                 NeedSemi::Yes
@@ -623,14 +663,16 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
             JsAst::Lambda { inputs, body } => {
                 self.buf.push_str("function(");
                 let mut first = true;
+
                 for i in inputs {
                     if first {
                         first = false;
                     } else {
                         self.buf.push_str(", ");
                     }
-                    self.buf.push_str(i);
+                    self.pattern_to_js(i);
                 }
+
                 self.buf.push_str(") ");
                 // TODO: Wrap in {} if body is not a Block
                 self.to_js(body, PREC_MAX);

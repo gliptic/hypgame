@@ -1,6 +1,8 @@
 use game_js
 use render
 
-fn foo(i: u32) {
-    return v
+@binary use "data.txt" as data
+
+fn foo([x,y]: u32) {
+    return 0
 }

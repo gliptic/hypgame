@@ -410,7 +410,7 @@ async function getText(p) {
 export async function startGame() {
     let sdfShader;
     let imgShader;
-    let shader3d, keyShader, wallShader;
+    let shader3d, imgShader3d, keyShader, wallShader;
     let gl;
     let canvas = document.getElementById("g");
     
@@ -418,6 +418,7 @@ export async function startGame() {
     gl = render.gl;
 
     let fs3d = await getText(fetch('./fs3d.glsl'));
+    let fs3dImg = await getText(fetch('./fs3d_img.glsl'));
     let wall = await getText(fetch('./wall.glsl'));
     let key = await getText(fetch('./key.glsl'));
     let fs = await getText(fetch('./fs2d.glsl'));
@@ -427,6 +428,7 @@ export async function startGame() {
     sdfShader = render.createShaderProgram(render.basicVs, fs);
     imgShader = render.createShaderProgram(render.basicVs, fsImg);
     shader3d = render.createShaderProgram(vs3d, fs3d, true);
+    imgShader3d = render.createShaderProgram(vs3d, fs3dImg, true);
     keyShader = render.createShaderProgram(vs3d, key, true);
     wallShader = render.createShaderProgram(vs3d, wall, true);
     //console.log('uniform s:', gl.getUniformLocation(shader3d, 's'));
@@ -444,6 +446,8 @@ export async function startGame() {
         .split('')
         .map(x => x.charCodeAt(0));
 
+    /*
+    // TODO: Need to leave gaps between letters to avoid artifacts. Easier than nudging texcoords?
     function getFontColor(x, y) {
         if (x < 36*3 && y < 5) {
             let pos = y * 36 * 3 + x;
@@ -454,67 +458,79 @@ export async function startGame() {
             }
         }
         return 0;
-    }
-
-    // 16x16
-    let cell_size = 8;
-    let grid_side = 128 / 8;
-    let grid_size = grid_side * grid_side;
-    let imgdata = Array(grid_size);
-
-    function shift_sin(x) {
-        return (1 + Math.sin(x)) / 2;
-    }
-
-    for (var i = 0; i < grid_size; ++i) {
-        //imgdata[i] = [Math.random() * (128 - cell_size*2), Math.random() * (128 - cell_size*2), Math.random()];
-        imgdata[i] = [shift_sin(i) * (128 - cell_size*2), shift_sin(i + 10) * (128 - cell_size*2), Math.random()];
-    }
-
-    function frac_(x, y, i) {
-        let xi = x >>> 3;
-        let yi = y >>> 3;
-        let xf = x & 7;
-        let yf = y & 7;
-
-        //let b = ((60 - Math.hypot(x - 64, y - 64)) * 64.0) | 0;
-        let b = Math.sin(x / 30.0) + Math.cos(y / 30.0);
-
-        var [xpos, ypos] = imgdata[xi * grid_side + yi];
-        if (i <= 1) {
-            return b;
-        }
-
-        return frac_(xpos + xf * 2, ypos + yf * 2, i - 1) + b;
-    }
-
-    function frac(x, y) {
-        var alpha = clamp(255 * frac_(x, y, 8) / 8, 0, 255);
-
-        return 0xff000000 + (alpha << 0) + (alpha << 8) + (alpha << 16);
-    }
-
-    function rkey(x, y) {
-        var v = [x/4 - 64, y/4 - 64];
-        //var c = subtract_c(
-        var c = sm_subtract_c(
-            [circ(vsub(v, [0, 0]), 40), 0x0000ffff],
-            [circ(vsub(v, [20, 20]), 30), 0x00103344],
-            10);
-
-        var alpha = clamp(128 - c[0] * 256, 0, 255);
-        return c[1] + (alpha << 24);
-    }
+    }*/
 
     let pointTex = genTex(new Uint32Array(128*128), render.GL_RGBA, getPointColor);
     let whiteTex = genTex(new Uint32Array(1), render.GL_RGBA, () => 0xffffffff);
-    let fontTex = genTex(new Uint32Array(128*128), render.GL_RGBA, getFontColor);
+    //let fontTex = genTex(new Uint32Array(128*128), render.GL_RGBA, getFontColor);
     //let pointTex = genTex(new Uint32Array(512*512), GL_RGBA, rkey);
 
     var rotx = 0.0;
     var roty = 0.0;
     var posx = 0.0;
     var posy = 0.0;
+    var audio;
+
+    canvas.onclick = function() {
+        if (!audio) {
+            audio = new AudioContext();
+            var bufSize = 8192; //16384;
+            let scriptProc = audio.createScriptProcessor(bufSize, 0, 2);
+            let time = 0.0;
+            let tick = 0;
+            let start = 44100 * 2;
+            let beep = Array(44100 >> 2).fill(0).map((_, x) => 0.2 * Math.sin(220 * 2 * Math.PI * x / 44100));
+
+            let samples = [];
+
+            function play1() {
+                samples.push([tick, beep]);
+            }
+
+            console.log(beep);
+
+            scriptProc.onaudioprocess = e => {
+                var left = e.outputBuffer.getChannelData(0),
+                    right = e.outputBuffer.getChannelData(1);
+
+                /*
+                samples = samples.filter(([start, sample]) => {
+                    var pan = 1;
+                    for (var i = 0; i < sample.length; ++i) {
+                        left[start + i - tick] += sample[i] * (1 - Math.max(pan, 0));
+                        right[start + i - tick] += sample[i] * (1 + Math.min(pan, 0));
+                    }
+                    return tick + bufSize - sample.length < start;
+                });
+                */
+                
+                tick += bufSize;
+            };
+            scriptProc.connect(audio.destination);
+
+            var buf = audio.createBuffer(1, beep.length, 44100);
+            buf.getChannelData(0).set(beep);
+
+            //play1();
+            play2();
+        }
+        canvas.requestPointerLock();
+    };
+
+    function play2() {
+        if (audio) {
+            var src = audio.createBufferSource();
+            var pan = audio.createStereoPanner();
+            var gain = audio.createGain();
+            gain.gain.value = 0.5;
+            pan.pan.value = 0.8;
+
+            src.buffer = buf;
+            //src.playbackRate.value = 1.2;
+            src.connect(gain).connect(pan).connect(audio.destination);
+            src.start();
+        }
+    }
 
     canvas.onmousemove = function(e) {
         if (document.pointerLockElement === canvas) {
@@ -544,7 +560,8 @@ export async function startGame() {
             update();
             render.updateWindow(canvas);
             gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-            gl.clear(render.GL_COLOR_BUFFER_BIT);
+            // TODO: Don't need clear if we render over everything
+            gl.clear(render.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT);
 
             {
                 let walkSpeed = 40;
@@ -564,26 +581,84 @@ export async function startGame() {
                     posy += Math.sin(roty) * walkSpeed;
                 }
                 t += 0.01;
-                //setView3d(rotx / 10, 1.0);
-                render.setView3d(roty, rotx, posx, posy, 1.0);
-                //render.activateShader3d(shader3d);
-                //render.activateShader3d(shader3d, t);
-                render.activateShader3d(wallShader, t);
 
-                render.color(0xff770077);
-                for (var x = -10000; x < 10000; x += 512 * 2 * 1.5) {
-                    var z = -2500;
-                    var step = 512 * 2;
-                    render.wall3d(pointTex, x + step, z, x, z, -step, step, 0, 0, 1, 1);
-                    render.wall3d(pointTex, x, z, x, z + step, -step, step, 0, 0, 1, 1);
-                    render.wall3d(pointTex, x + step, z + step, x + step, z, -step, step, 0, 0, 1, 1);
-                    render.wall3d(pointTex, x, z + step, x + step, z + step, -step, step, 0, 0, 1, 1);
+                if (true) {
+                    //setView3d(rotx / 10, 1.0);
+                    render.setView3d(roty, rotx, posx, posy, 1.0);
+                    //render.activateShader3d(shader3d);
+                    //render.activateShader3d(shader3d, t);
+                    render.activateShader3d(wallShader, t);
+
+                    render.color(0xff770077);
+                    for (var x = -10000; x < 10000; x += 512 * 2 * 1.5) {
+                        var z = -2500;
+                        var step = 512 * 2;
+                        render.wall3d(pointTex, x + step, z, x, z, -step, step, 0, 0, 1, 1);
+                        render.wall3d(pointTex, x, z, x, z + step, -step, step, 0, 0, 1, 1);
+                        render.wall3d(pointTex, x + step, z + step, x + step, z, -step, step, 0, 0, 1, 1);
+                        render.wall3d(pointTex, x, z + step, x + step, z + step, -step, step, 0, 0, 1, 1);
+                    }
+
+                    render.flush3d();
                 }
-
-                render.flush3d();
             }
 
             if (true) {
+                //render.setView(0, 0, 1, 0, 1.0);
+                render.setView3d(roty, rotx, posx, posy, 1.0);
+                render.activateShader3d(imgShader3d);
+                render.color(0xffffffff);
+
+                var text = '01 00';
+                var x = -256;
+
+                for (var i = 0; i < text.length; ++i) {
+                    var ch = text.charCodeAt(i);
+                    var id = 200;
+                    if (ch >= 48 && ch <= 57) {
+                        id = ch - 48;
+                    } else if (ch >= 65 && ch <= 90) {
+                        id = ch - 65 + 10;
+                    }
+
+                    var scale = 5;
+
+                    //if (id >= 0) {
+                    var step = 10 * scale / 3;
+                    for (var dx = 0; dx < 3; ++dx) {
+                        for (var dy = 0; dy < 5; ++dy) {
+                            let pos = (4 - dy) * 36 * 3 + id * 3 + dx;
+                            if ((fontBits[pos >> 3] >> (pos & 7)) & 1) {
+                                /*
+                                render.img(whiteTex,
+                                    x + step * dx,
+                                    128 + step * dy,
+                                    step, step,
+                                    0, 0, 1, 1);
+                                */
+
+                                var z = -2500 + 1030;
+                                render.wall3d(whiteTex,
+                                    x + step * dx, z,
+                                    x + step * (dx + 1), z,
+                                    dy * step, (dy + 1) * step,
+                                    0, 0, 1, 1);
+                            }
+                        }
+                    }
+
+                    x += 12 * scale;
+                    /*
+                    } else {
+                        x += 5;
+                    }*/
+                    
+                }
+                //render.flush();
+                render.flush3d();
+            }
+
+            if (false) {
                 render.setView(0, 0, 1, 0, 1.0);
                 render.activateShader(imgShader);
                 //render.color(0x00ff00ff);
@@ -600,11 +675,11 @@ export async function startGame() {
                     }
 
                     if (id >= 0) {
-                        let tx = (0.05 + id * 3) / 128;
-                        let pitchx = 2.9 / 128;
-                        let pitchy = 4.9 / 128;
+                        let tx = (id * 3) / 128;
+                        let pitchx = 3 / 128;
+                        let pitchy = 5 / 128;
                         let ty = 0;
-                        render.img(fontTex, x, 128, 10, -10*5/3, tx, ty, tx + pitchx, ty + pitchy);
+                        render.img(fontTex, x, 128, 10, 10*5/3, tx, ty + pitchy, tx + pitchx, ty);
 
                         x += 12;
                     } else {

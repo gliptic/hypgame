@@ -1,4 +1,5 @@
 use std::collections::{HashMap};
+use std::path::PathBuf;
 
 const LEX_DIGIT: u16 = 1 << 0;
 const LEX_BEG_IDENT: u16 = 1 << 1;
@@ -58,18 +59,19 @@ pub type Ident = String;
 pub struct ParseError(pub Span, pub &'static str);
 
 pub type ParseResult<T> = Result<T, ParseError>;
+pub type ModuleResult<T> = Result<T, (Vec<u8>, PathBuf, ParseError)>;
 
 #[derive(Debug)]
 pub struct ParamDef {
-    pub name: Ident,
-    //pub pat: Pattern,
+    //pub name: Ident,
+    pub pat: Pattern,
     pub ty: AstType,
-    pub local_index: u32
+    //pub local_index: u32
 }
 
 #[derive(Clone, Debug)]
 pub enum Pattern {
-    Ident(Ident),
+    Local(u32),
     Array(Vec<Pattern>)
 }
 
@@ -85,6 +87,7 @@ pub enum Local {
 #[derive(Debug)]
 pub struct AstLambda {
     pub params: Vec<ParamDef>,
+    pub param_locals: Vec<u32>,
     pub expr: Vec<Ast>,
     pub return_type: AstType
 }
@@ -101,14 +104,19 @@ pub enum Attr {
     None,
     Attribute,
     Varying,
-    Uniform
+    Uniform,
+    Binary
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Language {
     Js,
-    Glsl
+    Glsl,
+    Binary
 }
+
+#[derive(Clone, Debug)]
+pub struct Use(pub Attr, pub Ident);
 
 #[derive(Debug)]
 pub enum AstData {
@@ -208,10 +216,14 @@ pub struct Ast {
     pub data: AstData
 }
 
+// TODO: ModuleInfo is a very large subset of Module
+
 #[derive(Debug)]
 pub struct Module {
     pub lambda: AstLambda,
-    pub uses: Vec<Ident>,
+    pub src: Vec<u8>,
+    pub path: PathBuf,
+    pub uses: Vec<Use>,
     pub locals: Vec<(AstType, Ident)>,
     pub exports: Vec<u32>, // indexes into locals
     pub exports_rev: HashMap<Ident, u32>,
@@ -221,6 +233,8 @@ pub struct Module {
 #[derive(Debug)]
 pub struct ModuleInfo {
     pub name: String,
+    pub src: Vec<u8>,
+    pub path: PathBuf,
     pub locals: Vec<(AstType, Ident)>,
     pub exports: Vec<u32>, // indexes into locals
     pub exports_rev: HashMap<Ident, u32>,
@@ -232,6 +246,8 @@ impl ModuleInfo {
     pub fn from_module(module_name: String, import_map: Vec<u32>, module: Module) -> (AstLambda, ModuleInfo) {
         (module.lambda, ModuleInfo {
             name: module_name,
+            src: module.src,
+            path: module.path,
             locals: module.locals,
             exports: module.exports,
             exports_rev: module.exports_rev,
@@ -249,10 +265,10 @@ const fn ltab_pair_rtl(a: u16, b: u16) -> u16 {
     ltab_pair(a, b | 0x80)
 }
 
-pub struct Parser<'a> {
+pub struct Parser {
     lextable: [u16; 256],
     tt: u16,
-    src: &'a [u8],
+    src: Vec<u8>,
     prev_cur: usize,
     cur: usize,
     token_ident: Ident,
@@ -261,16 +277,17 @@ pub struct Parser<'a> {
     token_number: u64,
     token_float: f64,
     //module: Module,
-    uses: Vec<Ident>,
+    uses: Vec<Use>,
     locals: Vec<(AstType, Ident)>,
     exports: Vec<u32>, // indexes into locals
     exports_rev: HashMap<Ident, u32>,
-    language: Language
+    language: Language,
+    path: PathBuf
 }
 
-impl<'a> Parser<'a> {
+impl Parser {
     
-    pub fn new(src: &[u8]) -> Parser {
+    pub fn new(src: Vec<u8>, path: PathBuf) -> Parser {
         let mut lextable = [ltab_pair(LEX_SINGLE_CHAR, TT_INVALID); 256];
 
         lextable[0] = ltab_pair(LEX_SINGLE_CHAR, TT_EOF);
@@ -341,7 +358,8 @@ impl<'a> Parser<'a> {
             locals: Vec::new(),
             exports: Vec::new(),
             exports_rev: HashMap::new(),
-            language: Language::Js
+            language: Language::Js,
+            path
         }
     }
 
@@ -410,11 +428,30 @@ impl<'a> Parser<'a> {
         } else if (lexcat & LEX_WHITESPACE) != 0 {
             loop {
                 if ch == b'#' {
+                    let mut nest = if self.src[self.cur] == b'[' {
+                        self.cur += 1;
+                        1
+                    } else {
+                        0
+                    };
+
                     loop {
                         ch = self.src[self.cur];
                         self.cur += 1;
+
+                        if nest > 0 {
+                            if ch == b'[' {
+                                nest += 1;
+                            } else if ch == b']' {
+                                nest -= 1;
+                                if nest == 0 {
+                                    break;
+                                }
+                            }
+                        }
+
                         lexcat = self.lextable[ch as usize];
-                        if (lexcat & LEX_NEWLINE) != 0 || ch == 0 {
+                        if nest == 0 && ((lexcat & LEX_NEWLINE) != 0 || ch == 0) {
                             break;
                         }
                     }
@@ -425,6 +462,7 @@ impl<'a> Parser<'a> {
                  && self.tt != TT_LBRACKET
                  && self.tt != TT_LBRACE
                  && self.tt != TT_COMMA
+                 && self.tt != TT_DOT
                  && self.tt != TT_SEMICOLON
                  && self.tt != TT_EQUAL
                  //&& self.tt != TT_BAR
@@ -584,9 +622,10 @@ impl<'a> Parser<'a> {
         Ast { loc: self.span(), ty: AstType::Any, data: AstData::App { fun, params, kind } }
     }
 
-    pub fn new_lambda(&mut self, params: Vec<ParamDef>, return_type: AstType) -> AstLambda {
+    pub fn new_lambda(&mut self, params: Vec<ParamDef>, param_locals: Vec<u32>, return_type: AstType) -> AstLambda {
         AstLambda {
             params,
+            param_locals,
             expr: Vec::new(),
             return_type
         }
@@ -596,15 +635,35 @@ impl<'a> Parser<'a> {
         self.test(TT_COMMA) || self.test(TT_SEMICOLON)
     }
 
-/*
-    pub fn pattern_to_locals(&mut ) {
-
-    }
-*/
-
-    pub fn rparameters(&mut self, params: &mut Vec<ParamDef>) -> ParseResult<()> {
-        while self.tt != TT_RPAREN {
+    pub fn rpattern(&mut self, locals: &mut Vec<u32>, parent_ty: &AstType) -> ParseResult<Pattern> {
+        if self.tt == TT_IDENT {
             let name = self.check_ident()?;
+            let local_index = self.new_local(name.clone(), parent_ty.clone());
+            locals.push(local_index);
+            Ok(Pattern::Local(local_index))
+        } else if self.test(TT_LBRACKET) {
+            let mut subpat = Vec::new();
+            while self.tt != TT_RBRACKET {
+                // TODO: What type? Types should probably be
+                // decided in resolve by deconstructing the pattern.
+                subpat.push(self.rpattern(locals, &AstType::Any)?);
+                if !self.test_comma_or_semi() {
+                    break;
+                }
+            }
+
+            self.next();
+
+            Ok(Pattern::Array(subpat))
+        } else {
+            Err(ParseError(self.span(), "invalid pattern"))
+        }
+    }
+
+    pub fn rparameters(&mut self, params: &mut Vec<ParamDef>, locals: &mut Vec<u32>) -> ParseResult<()> {
+        while self.tt != TT_RPAREN {
+            //let name = self.check_ident()?;
+            let pat = self.rpattern(locals, &AstType::Any)?;
             let ty;
             if self.test(TT_COLON) {
                 ty = self.rtype()?;
@@ -612,9 +671,10 @@ impl<'a> Parser<'a> {
                 ty = AstType::Any;
             }
 
-            let local_index = self.new_local(name.clone(), ty.clone());
+            //let local_index = self.new_local(name.clone(), ty.clone());
             // TODO: Don't need to store name, ty here later on
-            params.push(ParamDef { name, ty, local_index });
+            params.push(ParamDef { ty, pat });
+            //locals.push(local_index);
             if !self.test_comma_or_semi() {
                 break;
             }
@@ -653,14 +713,16 @@ impl<'a> Parser<'a> {
         self.check(TT_LBRACE)?;
 
         let mut params = Vec::new();
+        let mut locals = Vec::new();
+        
         if self.test_double_bar() {
             // Do nothing. Why support this?
         } else if self.test_bar() {
-            self.rparameters(&mut params)?;
+            self.rparameters(&mut params, &mut locals)?;
             self.check_bar()?;
         }
 
-        let mut lambda = self.new_lambda(params, AstType::Any);
+        let mut lambda = self.new_lambda(params, locals, AstType::Any);
         self.rlambda(&mut lambda, TT_RBRACE)?;
 
         Ok(lambda)
@@ -701,7 +763,7 @@ impl<'a> Parser<'a> {
             TT_LBRACKET => {
                 self.next();
                 let mut elems = Vec::new();
-                self.rrecord_body(&mut elems);
+                self.rrecord_body(&mut elems)?;
                 self.ast_anyty(AstData::Array { elems })
             },
             _ => { return Err(ParseError(self.span(), "expected expression")) }
@@ -876,23 +938,32 @@ impl<'a> Parser<'a> {
         r
     }
 
-    pub fn rlambda_module(mut self) -> ParseResult<Module> {
+    pub fn rlambda_module(mut self) -> ModuleResult<Module> {
         let mut lambda = AstLambda {
             params: Vec::new(),
+            param_locals: Vec::new(),
             expr: Vec::new(),
             return_type: AstType::Any
         };
 
-        self.rlambda(&mut lambda, TT_EOF)?;
+        match self.rlambda(&mut lambda, TT_EOF) {
 
-        Ok(Module {
-            lambda,
-            uses: self.uses,
-            locals: self.locals,
-            exports: self.exports,
-            exports_rev: self.exports_rev,
-            language: self.language
-        })
+            Ok(_) => {
+                Ok(Module {
+                    lambda,
+                    src: self.src,
+                    path: self.path,
+                    uses: self.uses,
+                    locals: self.locals,
+                    exports: self.exports,
+                    exports_rev: self.exports_rev,
+                    language: self.language
+                })
+            }
+            Err(err) => {
+                Err((self.src, self.path, err))
+            }
+        }
     }
 
     pub fn ast_anyty(&self, data: AstData) -> Ast {
@@ -907,6 +978,18 @@ impl<'a> Parser<'a> {
         let index = self.locals.len();
         self.locals.push((ty, name));
         index as u32
+    }
+
+    pub fn ruse_path(&mut self) -> ParseResult<String> {
+        let path;
+        if self.tt == TT_CONSTSTR {
+            path = std::mem::replace(&mut self.token_ident, String::new());
+            self.next();
+        } else {
+            path = self.check_ident()?;
+        }
+        
+        Ok(path)
     }
 
     pub fn rlambda(&mut self, lambda: &mut AstLambda, end_token: Tt) -> ParseResult<()> {
@@ -937,6 +1020,9 @@ impl<'a> Parser<'a> {
                     "uniform" => {
                         attr = Attr::Uniform;
                     }
+                    "binary" => {
+                        attr = Attr::Binary;
+                    }
                     _ => panic!("unknown attribute")
                 }
                 
@@ -947,9 +1033,11 @@ impl<'a> Parser<'a> {
             if self.test(TT_FUN) {
                 let name = self.check_ident()?;
                 let mut params = Vec::new();
+                let mut locals = Vec::new();
 
                 if self.test(TT_LPAREN) {
-                    // TODO: Use rparameters
+                    self.rparameters(&mut params, &mut locals)?;
+                    /*
                     while self.tt != TT_RPAREN {
                         let param_name = self.check_ident()?;
                         let param_ty;
@@ -964,7 +1052,7 @@ impl<'a> Parser<'a> {
                         if !self.test_comma_or_semi() {
                             break;
                         }
-                    }
+                    }*/
 
                     self.check(TT_RPAREN)?;
                 }
@@ -977,7 +1065,7 @@ impl<'a> Parser<'a> {
                 }
 
                 self.check(TT_LBRACE)?;
-                let mut sublambda = self.new_lambda(params, ty);
+                let mut sublambda = self.new_lambda(params, locals, ty);
                 self.rlambda(&mut sublambda, TT_RBRACE)?;
                 //self.check(TT_RBRACE)?;
                 self.next();
@@ -1046,9 +1134,18 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else if self.test(TT_USE) {
-                let name = self.check_ident()?;
+                let path = self.ruse_path()?;
+                let name;
+                if self.test(TT_AS) {
+                    name = std::mem::replace(&mut self.token_ident, String::new());
+                    self.next();
+                } else {
+                    name = path.clone();
+                }
+
                 let rel_index = self.uses.len() as u32;
-                self.uses.push(name.clone());
+                // TODO: Validate attribute? Do in resolve probably
+                self.uses.push(Use(attr, path));
                 lambda.expr.push(Ast {
                     loc: self.span(),
                     ty: AstType::None,
@@ -1057,6 +1154,11 @@ impl<'a> Parser<'a> {
             } else if self.tt != TT_EOF && self.tt != end_token {
                 if is_pub {
                     panic!("spurious 'pub'");
+                }
+
+                // TODO: Support attributes for other things
+                if attr != Attr::None {
+                    panic!("spurious attribute");
                 }
                 let expr = self.rexpr()?;
                 lambda.expr.push(expr);

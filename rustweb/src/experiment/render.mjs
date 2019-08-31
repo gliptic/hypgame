@@ -52,7 +52,7 @@ void main() {
     d=b;
     e=c;
     f=a;
-    gl_Position = vec4((m*vec3(a,1.)).xy,1.,1.);
+    gl_Position = vec4((m*vec3(a,1.)).xy,0.,1.);
 }`;
 
 export let vs3d = `
@@ -179,6 +179,7 @@ export function setView(x, y, rotx, roty, zoom) {
     mat.trans(viewTrans, -x, -y)
 }
 
+var once = false;
 export function setView3d(roty, rotx, tx, ty, zoom) {
 
     /*
@@ -211,6 +212,11 @@ export function setView3d(roty, rotx, tx, ty, zoom) {
     viewPos3d = [tx, 0, ty]
 
     mat.scale3d(viewTrans3d, 1 / zoom, 1 / zoom, 1 / zoom);
+
+    if (!once) {
+        console.log(viewTrans3d);
+        once = true;
+    }
 }
 
 export function flush() {
@@ -234,7 +240,7 @@ export function flush3d() {
         checkErr(gl.vertexAttribPointer(locUV, 2, GL_FLOAT, 0, VERTEX_SIZE3D, 12))
         checkErr(gl.vertexAttribPointer(locColor, 4, GL_FLOAT, 0, VERTEX_SIZE3D, 20))
         gl.bufferSubData(GL_ARRAY_BUFFER, 0, new Float32Array(arrPositionData3d));
-        //console.log(arrPositionData3d.length, arrPositionData3d.length / (VERTEX_SIZE3D / 4));
+        //console.log(arrPositionData3d);
         gl.drawArrays(GL_TRIANGLES, 0, arrPositionData3d.length / (VERTEX_SIZE3D / 4))
         arrPositionData3d.length = 0;
     }
@@ -446,14 +452,12 @@ export function checkErr(v) {
 
 export function init(canvas) {
     initGl(canvas)
-    canvas.onclick = function() {
-        canvas.requestPointerLock();
-    };
+    
     //gl.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(GL_BLEND)
-    //gl.enable(gl.CULL_FACE)
-    //gl.enable(gl.DEPTH_TEST)
+    gl.enable(gl.CULL_FACE)
+    gl.enable(gl.DEPTH_TEST)
 
     gl.getExtension("OES_standard_derivatives")
     

@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 use crate::hyp_parser as hyp;
-//use std::collections::{HashMap, hash_map};
+use std::collections::{HashSet};
 
 //type TypedAst = (GlslAst, GlslType);
 type Id = u32;
@@ -23,11 +23,12 @@ pub enum GlslLit {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum GlslAst {
     Undef,
-    Fn { id: Id, exported: bool, arg_names: Vec<String>, expr: Box<GlslAst> },
+    Fn { id: Id, exported: bool, args: Vec<u32>, expr: Box<GlslAst> },
     Lit { lit: GlslLit },
     Block { stmts: Vec<GlslAst> },
     Locals { locs: Vec<(String, GlslAst, Id)> },
     LocalRef { id: Id },
+    ModuleMember { abs_index: u32, local_index: u32 },
     Path { segments: Vec<String> },
     Assign { left: Box<GlslAst>, right: Box<GlslAst> },
     Field { base: Box<GlslAst>, member: String },
@@ -101,6 +102,7 @@ pub struct GlslModule {
     pub locals: Vec<(GlslType, String)>,
     pub exports: Vec<u32>, // Referenced to locals
     //pub globals: Vec<GlslGlobal>
+    pub used_imports: HashSet<(u32, u32)>, // Imports that are actually used
     pub attributes: Vec<Id>,
     pub varyings: Vec<Id>,
     pub uniforms: Vec<Id>,
@@ -117,6 +119,7 @@ impl GlslEnc {
                 items: Vec::new(),
                 locals: Vec::new(),
                 exports: Vec::new(),
+                used_imports: HashSet::new(),
                 varyings: Vec::new(),
                 attributes: Vec::new(),
                 uniforms: Vec::new(),
@@ -197,6 +200,14 @@ impl GlslEnc {
         ident.clone()
     }
 
+    pub fn parse_pattern(&self, pat: &hyp::Pattern) -> u32 {
+        match pat {
+            hyp::Pattern::Local(local_index) =>
+                *local_index,
+            _ => panic!("patterns not supported in glsl"), // TODO: Report errors without panic
+        }
+    }
+
     fn parse_item(&mut self, item: &hyp::Ast) -> Option<GlslAst> {
         match &item.data {
             hyp::AstData::LetLocal { name, local_index, attr, .. } => {
@@ -223,20 +234,21 @@ impl GlslEnc {
                 //self.add_local(name, GlslLocal::Local(id));
                 //let index = self.module.exports.push(id);
 
-                let arg_names: Vec<String> = lambda.params.iter().map(|p| {
-                    /*
-                    match &p.pat {
-                        hyp::Pattern::Ident(name) => self.ident_to_str(&p.name),
-                        _ => panic!("pattern not allowed for glsl")
-                    }*/
-                    self.ident_to_str(&p.name)
+                let args: Vec<u32> = lambda.params.iter().map(|p| {
+                    self.parse_pattern(&p.pat)
                 }).collect();
 
                 let expr = GlslAst::Block {
                     stmts: lambda.expr.iter().map(|s| self.parse_stmt(s)).flatten().collect()
                 };
 
-                Some(GlslAst::Fn { id: *local_index, exported: *exported, arg_names, expr: Box::new(expr) })
+                Some(GlslAst::Fn {
+                    id: *local_index,
+                    exported: *exported,
+                    //arg_names,
+                    args,
+                    expr: Box::new(expr)
+                })
             }
             _ => {
                 None
@@ -488,6 +500,10 @@ impl GlslEnc {
                         GlslAst::Path { segments: vec![name.clone()] },
                     hyp::Local::Local { index } =>
                         GlslAst::LocalRef { id: index },
+                    hyp::Local::ModuleMember { abs_index, local_index } => {
+                        self.module.used_imports.insert((abs_index, local_index));
+                        GlslAst::ModuleMember { abs_index, local_index }
+                    }
                     _ => panic!("unimplemented local {:?}", local)
                 }
             }

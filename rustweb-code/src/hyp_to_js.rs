@@ -1,12 +1,13 @@
 //use serde::{Serialize, Deserialize};
 //use std::collections::{HashMap, hash_map};
-use crate::js_ast::{JsLit, JsOp, JsUnop, JsAst, JsModule};
+use crate::js_ast::{JsLit, JsOp, JsUnop, JsAst, JsModule, JsPattern};
 use crate::hyp_parser::{self as hyp};
 
 pub struct JsEnc {
     //pub locals: HashMap<String, JsLocal>,
     //pub local_list: Vec<String>,
     pub module: JsModule,
+    pub errors: Vec<hyp::ParseError>,
     //pub exported_decls: Vec<(String, String, syn::ItemFn)>,
 }
 
@@ -19,13 +20,18 @@ impl JsEnc {
             module: JsModule {
                 //name,
                 items: Vec::new()
-            }
+            },
+            errors: Vec::new()
         };
 
         //enc.add_local("glsl", JsLocal::Builtin(JsBuiltin::Glsl));
         //enc.add_local("wasm", JsLocal::Builtin(JsBuiltin::Wasm));
 
         enc
+    }
+
+    pub fn add_error(&mut self, ast: &hyp::Ast, s: &'static str) {
+        self.errors.push(hyp::ParseError(ast.loc, s));
     }
 
 /*
@@ -41,15 +47,18 @@ impl JsEnc {
     }
 */
 
-    pub fn map_unop(&self, op: &hyp::Ident) -> JsUnop {
+    pub fn map_unop(&mut self, ast: &hyp::Ast, op: &hyp::Ident) -> JsUnop {
         match &op[..] {
             "-" => JsUnop::Minus,
             "!" => JsUnop::Not,
-            _ => panic!("unimplemented unary op {}", &self.ident_to_str(op))
+            _ => {
+                self.add_error(&ast, "unimplemented unary op");
+                JsUnop::Minus
+            }
         }
     }
 
-    pub fn map_binop(&self, op: &hyp::Ident) -> JsOp {
+    pub fn map_binop(&mut self, ast: &hyp::Ast, op: &hyp::Ident) -> JsOp {
         match &op[..] {
             "*" => JsOp::Mul,
             "/" => JsOp::Div,
@@ -68,13 +77,17 @@ impl JsEnc {
             "||" => JsOp::OrOr,
             "<<" => JsOp::Shl,
             ">>" => JsOp::Shr,
+            ">>>" => JsOp::Lshr,
             "==" => JsOp::Eq,
             "<" => JsOp::Lt,
             "<=" => JsOp::Le,
             "!=" => JsOp::Ne,
             ">" => JsOp::Gt,
             ">=" => JsOp::Ge,
-            _ => panic!("unimplemented binary op {}", &self.ident_to_str(op))
+            _ => {
+                self.add_error(&ast, "unimplemented binary op");
+                JsOp::Add
+            }
         }
     }
 
@@ -121,7 +134,7 @@ impl JsEnc {
 
                 JsAst::Unary {
                     value: Box::new(self.parse_expr(&params[0])),
-                    op: self.map_unop(s),
+                    op: self.map_unop(&expr, s),
                 }
             }
             hyp::AstData::App {
@@ -141,7 +154,7 @@ impl JsEnc {
                 } else {
                     JsAst::Binary {
                         left: Box::new(self.parse_expr(&params[0])),
-                        op: self.map_binop(s),
+                        op: self.map_binop(&expr, s),
                         right: Box::new(self.parse_expr(&params[1])),
                     }
                 }
@@ -164,7 +177,10 @@ impl JsEnc {
                             member: member_str
                         }
                     }
-                    _ => panic!("invalid field access {:?}", &member.data)
+                    _ => {
+                        self.add_error(&expr, "invalid field access");
+                        JsAst::Undefined
+                    }
                 }
             },
             hyp::AstData::Index { base, index } => {
@@ -181,8 +197,8 @@ impl JsEnc {
                 }
             }
             hyp::AstData::Lambda { lambda } => {
-                let args: Vec<String> = lambda.params.iter().map(|p| {
-                    self.ident_to_str(&p.name)
+                let args: Vec<JsPattern> = lambda.params.iter().map(|p| {
+                    self.parse_pattern(&p.pat)
                 }).collect();
 
                 let body_ast = lambda.expr.iter().map(|e| self.parse_stmt(e)).collect();
@@ -286,7 +302,10 @@ impl JsEnc {
                 }
             },
             */
-            _ => panic!("unimplemented expr {:?}", expr)
+            _ => {
+                self.add_error(&expr, "unimplemented expr");
+                JsAst::Undefined
+            }
         }
     }
 
@@ -342,6 +361,15 @@ impl JsEnc {
         ident.clone()
     }
 
+    pub fn parse_pattern(&self, pat: &hyp::Pattern) -> JsPattern {
+        match pat {
+            hyp::Pattern::Local(local_index) =>
+                JsPattern::Local(*local_index),
+            hyp::Pattern::Array(arr) =>
+                JsPattern::Array(arr.iter().map(|x| self.parse_pattern(x)).collect()),
+        }
+    }
+
     pub fn parse_stmt(&mut self, stmt: &hyp::Ast) -> JsAst {
         match &stmt.data {
             hyp::AstData::Use { name, rel_index } => {
@@ -373,8 +401,8 @@ impl JsEnc {
 
                 let exported = false; // TODO
 
-                let args: Vec<u32> = lambda.params.iter().map(|p| {
-                    p.local_index
+                let args: Vec<JsPattern> = lambda.params.iter().map(|p| {
+                    self.parse_pattern(&p.pat)
                 }).collect();
 
                 let expr = JsAst::Block {

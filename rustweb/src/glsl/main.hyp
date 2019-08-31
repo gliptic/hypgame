@@ -1,12 +1,10 @@
 @language(glsl)
 
-#@version(120)
-#@attribute pub let a: vec2
+use vertex as vert
 
-@varying pub let d: vec2
-@varying pub let e: vec4
 @uniform pub let s: sampler2D
 
+#[
 fn pie(p: vec2, angle: float): float {
     angle := radians(angle) / 2.0
     let n = vec2(cos(angle), sin(angle))
@@ -17,8 +15,10 @@ fn rotateCCW(p: vec2, a: float): vec2 {
     let m = mat2(cos(a), sin(a), -sin(a), cos(a))
     return p * m
 }
+]
 
 pub fn main() {
-    gl_FragColor := texture2D(s, d)*e
+    gl_FragColor := texture2D(s, vert.fsTexcoord)*vert.fsColor
+    #gl_FragColor := vec4(vert.fsTexcoord.xy, 0, 1) #*vert.fsColor
+    #gl_FragColor := vec4(1,1,1,1)
 }
-

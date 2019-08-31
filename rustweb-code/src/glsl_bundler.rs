@@ -252,17 +252,27 @@ impl<'a> GlslBundler<'a> {
     }
 
     pub fn module_to_glsl(&mut self, module: &GlslModule) {
-        let globals = [
-            (&module.varyings, "varying"),
-            (&module.attributes, "attribute"),
-            (&module.uniforms, "uniform"),
+
+        let mut varyings: Vec<_> = module.varyings.iter().map(|&v| (self.current_module, v)).collect();
+        let attributes: Vec<_> = module.attributes.iter().map(|&v| (self.current_module, v)).collect();
+        let uniforms: Vec<_> = module.uniforms.iter().map(|&v| (self.current_module, v)).collect();
+
+        // TODO: Distinguish imported varyings from imported uniforms
+        for &(module_index, local_index) in &module.used_imports {
+            varyings.push((module_index as usize, local_index));
+        }
+
+        let globals = vec![
+            (&varyings, "varying"),
+            (&attributes, "attribute"),
+            (&uniforms, "uniform"),
         ];
 
         if self.exported_local < 0 {
             for (t, kind) in &globals {
-                for &i in *t {
-                    let ty = &self.module_infos[self.current_module].locals[i as usize].0;
-                    let name = &self.module_infos[self.current_module].locals[i as usize].1;
+                for &(module_index, local_index) in *t {
+                    let (ty, name) = &self.module_infos[module_index].locals[local_index as usize];
+                    //let name = &self.module_infos[module_index].locals[local_index as usize].1;
 
                     self.buf.ident(kind);
                     self.buf.type_to_glsl(ty);
@@ -278,7 +288,7 @@ impl<'a> GlslBundler<'a> {
 
     pub fn to_glsl(&mut self, ast: &GlslAst, slot: Prec) -> NeedSemi {
         match ast {
-            GlslAst::Fn { id, expr, arg_names, exported } => {
+            GlslAst::Fn { id, expr, args, exported } => {
 
                 if (*exported && *id as i32 != self.exported_local)
                  || (!*exported && self.exported_local >= 0) {
@@ -303,13 +313,15 @@ impl<'a> GlslBundler<'a> {
                 
                 self.buf.lparen();
                 let mut first = true;
-                for (name, ty) in arg_names.iter().zip(args_ty.iter()) {
+                for (local_index, ty) in args.iter().zip(args_ty.iter()) {
                     if first {
                         first = false;
                     } else {
                         self.buf.comma();
                     }
                     self.buf.type_to_glsl(ty);
+
+                    let (_, name) = &self.module_infos[self.current_module].locals[*local_index as usize];
                     self.buf.ident(name);
                 }
                 self.buf.rparen();
@@ -356,7 +368,6 @@ impl<'a> GlslBundler<'a> {
                     },
                     GlslLit::Float(v) => {
                         let mut txt = format!("{}", v);
-                        //dbg!(&txt);
                         if !txt.contains('.') {
                             txt.push('.'); // 1 -> 1.
                         } else {
@@ -402,10 +413,10 @@ impl<'a> GlslBundler<'a> {
                         self.buf.comma();
                     }
                     let id = locs[i].2;
-                    let ty = &self.module_infos[self.current_module].locals[id as usize].0;
+                    let (ty, name) = &self.module_infos[self.current_module].locals[id as usize];
 
                     self.buf.type_to_glsl(ty);
-                    let name = &locs[i].0;
+                    //let name = &locs[i].0;
                     self.buf.ident(name);
                     let init = &locs[i].1;
                     if let GlslAst::Undef = init {
@@ -563,13 +574,17 @@ impl<'a> GlslBundler<'a> {
                 self.buf.unwrap_p(p);
                 NeedSemi::Yes
             }
-            GlslAst::LocalRef { id } => {
-                let name = &self.module_infos[self.current_module].locals[*id as usize].1;
+            &GlslAst::LocalRef { id } => {
+                let name = &self.module_infos[self.current_module].locals[id as usize].1;
 
                 self.buf.ident(&self.ident_to_str(name));
                 NeedSemi::Yes
             }
-            //GlslAst::Item => { NeedSemi::No } // TEMP
+            &GlslAst::ModuleMember { abs_index, local_index } => {
+                let name = &self.module_infos[abs_index as usize].locals[local_index as usize].1;
+                self.buf.ident(&self.ident_to_str(name));
+                NeedSemi::Yes
+            }
             /*
             GlslAst::Index { expr, index } => {
                 let p = self.wrap_p(slot, PREC_DOT_BRACKET);

@@ -1,5 +1,5 @@
 use vecmath
-use vertex_glsl
+use "glsl/vertex" as vertex_glsl
 
 pub let gl, canvas_w, canvas_h, viewTrans
 
@@ -9,7 +9,9 @@ pub let GL_VERTEX_SHADER = 0x8B31,
     GL_ARRAY_BUFFER = 0x8892,
     GL_TEXTURE0 = 0x84C0
 
-pub let GL_SRC_ALPHA =           0x0302,
+pub let GL_ONE = 1,
+    GL_ZERO = 0,
+    GL_SRC_ALPHA =           0x0302,
     GL_ONE_MINUS_SRC_ALPHA = 0x0303,
     GL_DST_ALPHA =           0x0304,
     GL_ONE_MINUS_DST_ALPHA = 0x0305,
@@ -43,7 +45,7 @@ pub let basicVs = vertex_glsl.main
 #let wasm_memory = wasm.memory.buffer
 #let wasm_U8 = Uint8Array.new(wasm_memory)
 #let wasm_U32 = Uint32Array.new(wasm_memory)
-let VERTEX_SIZE = (4 * 3) + (4 * 2) + (4)
+let VERTEX_SIZE = (4 * 3) + (4 * 2) + (4 * 4)
 let MAX_BATCH = 10922
 #let MAX_STACK = 100
 #let MAT_SIZE = 6
@@ -65,7 +67,7 @@ fn initGl(canvas) {
     gl := canvas.getContext("webgl")
     canvas_w := canvas.width
     canvas_h := canvas.height
-    gl.clearColor(0.0, 0.2, 0.0, 1.0)
+    gl.clearColor(0.2, 0.25, 0.4, 1.0)
 }
 
 pub fn createBuffer(bufferType, size, usage) {
@@ -87,7 +89,8 @@ pub fn createTexture(image, side, ty) {
 }
 
 pub fn setViewTransform(shader) {
-    gl.uniformMatrix3fv(gl.getUniformLocation(shader, "m"), 0, viewTrans)
+    #gl.uniformMatrix3fv(gl.getUniformLocation(shader, "m"), 0, viewTrans)
+    gl.uniform1f(gl.getUniformLocation(shader, vertex_glsl.invAr), canvas_h / canvas_w)
 }
 
 pub fn color(c) {
@@ -108,173 +111,56 @@ pub fn setView(x, y, rotx, roty, zoom) {
     vecmath.trans(viewTrans, -x, -y)
 }
 
+#[
 pub fn flush_buf(buf_p, cou) {
     gl.bufferSubData(GL_ARRAY_BUFFER, 0, wasm_U8.subarray(buf_p, buf_p + cou * 5 * 4))
     gl.drawArrays(GL_TRIANGLES, 0, cou)
 }
+]
 
 pub fn flush() {
-    if (count) {
-        gl.bufferSubData(GL_ARRAY_BUFFER, 0, vPositionData.buffer.subarray(0, count * QUAD_SIZE_IN_WORDS))
-        gl.drawArrays(GL_TRIANGLES, 0, count * VERTICES_PER_QUAD)
-        count := 0
+    if (vertexData.length) {
+        gl.vertexAttribPointer(locPos, 3, GL_FLOAT, 0, VERTEX_SIZE, 0)
+        gl.vertexAttribPointer(locUV, 2, GL_FLOAT, 0, VERTEX_SIZE, 12)
+        gl.vertexAttribPointer(locColor, 4, GL_FLOAT, 0, VERTEX_SIZE, 20)
+        gl.bufferSubData(GL_ARRAY_BUFFER, 0, Float32Array.new(vertexData))
+        #console.log(vertexData.length, vertexData.length / (VERTEX_SIZE / 4))
+        console.log(vertexData)
+        gl.drawArrays(GL_TRIANGLES, 0, vertexData.length / (VERTEX_SIZE / 4))
+        #vertexData.length := 0
     }
     currentTexture := null
 }
 
-pub fn img(texture, x, y, w_, h_, u0, v0, u1, v1) {
-    let x0 = x
-    let y0 = y
-    let x1 = x + w_
-    let y1 = y + h_
-    let x2 = x
-    let y2 = y + h_
-    let x3 = x + w_
-    let y3 = y
-    let offset = 0
-    let argb = col
+pub fn wall3d(texture, fx0, fz0, fx1, fz1, fy, cy, u0, v0, u1, v1) {
+    let x0 = fx0,     y0 = fy,     z0 = fz0
+    let x1 = fx1,     y1 = fy,     z1 = fz1
+    let x2 = fx1,     y2 = cy,     z2 = fz1
+    let x3 = fx0,     y3 = cy,     z3 = fz0
+    let abgr = col
 
-    if texture != currentTexture || count + 1 >= MAX_BATCH {
+    if (texture != currentTexture) {
         flush()
-        if currentTexture != texture {
-            currentTexture := texture
-            gl.bindTexture(GL_TEXTURE_2D, currentTexture)
-        }
+        #if (currentTexture != texture) {
+        currentTexture := texture
+        gl.bindTexture(GL_TEXTURE_2D, currentTexture)
+        #}
     }
 
-    offset := count * QUAD_SIZE_IN_WORDS - 1
-    # Vertex Order
-    # Vertex Position | UV | ARGB
-    # Vertex 1
-    vPositionData[offset += 1] := x0 * mat0 + y0 * mat2 + mat4
-    vPositionData[offset += 1] := x0 * mat1 + y0 * mat3 + mat5
-    vPositionData[offset += 1] := u0
-    vPositionData[offset += 1] := v0
-    vColorData[offset += 1] := argb
+    var a = (abgr >>> 24) / 255;
+    var b = ((abgr >> 16) & 0xff) / 255;
+    var g = ((abgr >> 8) & 0xff) / 255;
+    var r = (abgr & 0xff) / 255;
 
-    # Vertex 4
-    vPositionData[offset += 1] := x3 * mat0 + y3 * mat2 + mat4
-    vPositionData[offset += 1] := x3 * mat1 + y3 * mat3 + mat5
-    vPositionData[offset += 1] := u1
-    vPositionData[offset += 1] := v0
-    vColorData[offset += 1] := argb
-    
-    # Vertex 2
-    vPositionData[offset += 1] := x1 * mat0 + y1 * mat2 + mat4
-    vPositionData[offset += 1] := x1 * mat1 + y1 * mat3 + mat5
-    vPositionData[offset += 1] := u1
-    vPositionData[offset += 1] := v1
-    vColorData[offset += 1] := argb
+    if (vertexData.push(
+        x0,y0,z0,u0,v1,r,g,b,a,
+        x1,y1,z1,u1,v1,r,g,b,a,
+        x3,y3,z3,u0,v0,r,g,b,a,
+        x1,y1,z1,u1,v1,r,g,b,a,
+        x2,y2,z2,u1,v0,r,g,b,a,
+        x3,y3,z3,u0,v0,r,g,b,a) >= MAX_BATCH * QUAD_SIZE_IN_WORDS) {
 
-    # Vertex 1
-    vPositionData[offset += 1] := x0 * mat0 + y0 * mat2 + mat4
-    vPositionData[offset += 1] := x0 * mat1 + y0 * mat3 + mat5
-    vPositionData[offset += 1] := u0
-    vPositionData[offset += 1] := v0
-    vColorData[offset += 1] := argb
-
-    # Vertex 2
-    vPositionData[offset += 1] := x1 * mat0 + y1 * mat2 + mat4
-    vPositionData[offset += 1] := x1 * mat1 + y1 * mat3 + mat5
-    vPositionData[offset += 1] := u1
-    vPositionData[offset += 1] := v1
-    vColorData[offset += 1] := argb
-    
-    # Vertex 3
-    vPositionData[offset += 1] := x2 * mat0 + y2 * mat2 + mat4
-    vPositionData[offset += 1] := x2 * mat1 + y2 * mat3 + mat5
-    vPositionData[offset += 1] := u0
-    vPositionData[offset += 1] := v1
-    vColorData[offset += 1] := argb
-    
-    if (count += 1) >= MAX_BATCH {
-        flush()
-    }
-}
-
-pub fn img_simple2(x, y, w_, h_, r, g, b, a) {
-    let x0 = x, y0 = y
-    let x1 = x + w_, y1 = y + h_
-    let x2 = x, y2 = y + h_
-    let x3 = x + w_, y3 = y
-    let u0 = 0, v0 = 0
-    let u1 = 1, v1 = 1
-
-    if vPositionData.push(
-        x0,y0,u0,v0,r,g,b,a,
-        x3,y3,u1,v0,r,g,b,a,
-        x1,y1,u1,v1,r,g,b,a,
-        x0,y0,u0,v0,r,g,b,a,
-        x1,y1,u1,v1,r,g,b,a,
-        x2,y2,u0,v1,r,g,b,a) >= MAX_BATCH * 4 * 6 {
-
-        flush()
-    }
-    
-}
-
-pub fn img_simple(x, y, argb) {
-    let x0 = x
-    let y0 = y
-    let x1 = x + 25
-    let y1 = y + 25
-    let x2 = x
-    let y2 = y + 25
-    let x3 = x + 25
-    let y3 = y
-    let offset = 0
-    let u0 = 0
-    let v0 = 0
-    let u1 = 1
-    let v1 = 1
-
-    offset := count * QUAD_SIZE_IN_WORDS - 1
-    # Vertex Order
-    # Vertex Position | UV | ARGB
-    # Vertex 1
-    vPositionData[offset += 1] := x0
-    vPositionData[offset += 1] := y0
-    vPositionData[offset += 1] := u0
-    vPositionData[offset += 1] := v0
-    vColorData[offset += 1] := argb
-
-    # Vertex 4
-    vPositionData[offset += 1] := x3
-    vPositionData[offset += 1] := y3
-    vPositionData[offset += 1] := u1
-    vPositionData[offset += 1] := v0
-    vColorData[offset += 1] := argb
-    
-    # Vertex 2
-    vPositionData[offset += 1] := x1
-    vPositionData[offset += 1] := y1
-    vPositionData[offset += 1] := u1
-    vPositionData[offset += 1] := v1
-    vColorData[offset += 1] := argb
-
-    # Vertex 1
-    vPositionData[offset += 1] := x0
-    vPositionData[offset += 1] := y0
-    vPositionData[offset += 1] := u0
-    vPositionData[offset += 1] := v0
-    vColorData[offset += 1] := argb
-
-    # Vertex 2
-    vPositionData[offset += 1] := x1
-    vPositionData[offset += 1] := y1
-    vPositionData[offset += 1] := u1
-    vPositionData[offset += 1] := v1
-    vColorData[offset += 1] := argb
-    
-    # Vertex 3
-    vPositionData[offset += 1] := x2
-    vPositionData[offset += 1] := y2
-    vPositionData[offset += 1] := u0
-    vPositionData[offset += 1] := v1
-    vColorData[offset += 1] := argb
-
-    if (count += 1) >= MAX_BATCH {
-        flush()
+        flush();
     }
 }
 
@@ -296,7 +182,8 @@ pub fn compileShader(source, ty) {
 }
 
 pub fn bindAttribLocations(shader) {
-    ["a", "b", "c"].map({ |name, i| gl.bindAttribLocation(shader, i, name) })
+    [vertex_glsl.pos, vertex_glsl.texcoord, vertex_glsl.color].
+        map({ |name, i| gl.bindAttribLocation(shader, i, name) })
 }
 
 pub fn createShaderProgram(vsSource, fsSource) {
@@ -327,20 +214,17 @@ pub fn checkErr(v) {
 
 pub fn init(canvas) {
     initGl(canvas)
-    gl.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    #gl.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    gl.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     gl.enable(GL_BLEND)
 
     gl.getExtension("OES_standard_derivatives")
     
     VBO := createBuffer(GL_ARRAY_BUFFER, VERTEX_DATA_SIZE, GL_DYNAMIC_DRAW)
-    gl.bindBuffer(GL_ARRAY_BUFFER, VBO)
     
     gl.enableVertexAttribArray(locPos)
     gl.enableVertexAttribArray(locUV)
     gl.enableVertexAttribArray(locColor)
-    gl.vertexAttribPointer(locPos, 2, GL_FLOAT, 0, VERTEX_SIZE, 0)
-    gl.vertexAttribPointer(locUV, 2, GL_FLOAT, 0, VERTEX_SIZE, 8)
-    gl.vertexAttribPointer(locColor, 4, GL_UNSIGNED_BYTE, 1, VERTEX_SIZE, 16)
     
     gl.activeTexture(GL_TEXTURE0)
 }

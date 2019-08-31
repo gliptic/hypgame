@@ -24,7 +24,7 @@ pub enum GlslLit {
 pub enum GlslAst {
     //Item,
     Undef,
-    Fn { id: Id, exported: bool, arg_names: Vec<String>, expr: Box<GlslAst> },
+    Fn { id: Id, exported: bool, args: Vec<u32>, expr: Box<GlslAst> },
     Lit { lit: GlslLit },
     Block { stmts: Vec<GlslAst> },
     Locals { locs: Vec<(String, GlslAst, Id)> },

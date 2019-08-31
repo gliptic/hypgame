@@ -42,6 +42,7 @@ void main() {
     fsTexcoord = texcoord;
     fsPos = vec4(pos, 1);
     fsSkyPos = vec4(pos + viewPos, 1);
+    fsColor = color;
     //gl_Position = projection * modelView * vec4(pos, 1);
 
     /*

@@ -1,8 +1,8 @@
 [workspace]
 
 members = [
-    "rustweb",
-    "rustweb-macro",
+    #"rustweb",
+    #"rustweb-macro",
     "rustweb-code",
     "rustweb-bundler"
 ]

@@ -37,3 +37,5 @@ GLSL:
     * Matrices are the same, but the single value is used for the diagonal
     * Matrices are column-wise
 * Common-prefixes in shaders in a shader module can be trivially moved over to the common part
+* Vertex shaders should be able to 'use' each other so that the attributes get the same names
+

@@ -42,6 +42,7 @@ pub enum JsOp {
     OrOr,
     Shl,
     Shr,
+    Lshr,
     Eq,
     Lt,
     Le,
@@ -59,9 +60,16 @@ pub enum JsUnop {
     PreDec,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum JsPattern {
+    Array(Vec<JsPattern>),
+    Local(u32)
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub enum JsAst {
-    Fn { index: u32, args: Vec<u32>, exported: bool, expr: Box<JsAst> },
+    //Fn { index: u32, args: Vec<u32>, exported: bool, expr: Box<JsAst> },
+    Fn { index: u32, args: Vec<JsPattern>, exported: bool, expr: Box<JsAst> },
     Use { name: String, rel_index: u32 },
     Path { path: Vec<String> },
     Builtin { builtin: JsBuiltin },
@@ -74,7 +82,8 @@ pub enum JsAst {
     Assign { left: Box<JsAst>, right: Box<JsAst> },
     Field { base: Box<JsAst>, member: String },
     Index { expr: Box<JsAst>, index: Box<JsAst> },
-    Lambda { inputs: Vec<String>, body: Box<JsAst> },
+    //Lambda { inputs: Vec<u32>, body: Box<JsAst> },
+    Lambda { inputs: Vec<JsPattern>, body: Box<JsAst> },
     Return { value: Box<JsAst> },
     Unary { value: Box<JsAst>, op: JsUnop },
     Binary { left: Box<JsAst>, op: JsOp, right: Box<JsAst> },
