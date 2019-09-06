@@ -13,14 +13,14 @@ pub enum GlslLocal {
     Local(u32)
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum GlslLit {
     Int(u64),
     //Str(String),
     Float(f64)
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum GlslAst {
     Undef,
     Fn { id: Id, exported: bool, args: Vec<u32>, expr: Box<GlslAst> },
@@ -36,9 +36,28 @@ pub enum GlslAst {
     Unary { value: Box<GlslAst>, op: GlslUnop },
     Binary { left: Box<GlslAst>, op: GlslOp, right: Box<GlslAst> },
     Call { func: Box<GlslAst>, args: Vec<GlslAst> }, // TODO: Record overload?
+    //Seq { expr: Vec<GlslAst> },
     If { cond: Box<GlslAst>, then_branch: Vec<GlslAst>, else_branch: Option<Box<GlslAst>> },
     While { cond: Box<GlslAst>, body: Vec<GlslAst> },
     Loop { body: Vec<GlslAst> },
+}
+
+impl GlslAst {
+    pub fn is_expr(&self) -> bool {
+        match self {
+              GlslAst::Loop { .. }
+            | GlslAst::Locals { .. }
+            | GlslAst::Return { .. }
+            | GlslAst::While { .. }
+            | GlslAst::Fn { .. } => false,
+            GlslAst::If { then_branch, else_branch, .. } =>
+                then_branch.iter().all(|x| x.is_expr()) &&
+                else_branch.iter().all(|x| x.is_expr()),
+            GlslAst::Block { stmts } =>
+                stmts.iter().all(|x| x.is_expr()),
+            _ => true
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -210,7 +229,7 @@ impl GlslEnc {
 
     fn parse_item(&mut self, item: &hyp::Ast) -> Option<GlslAst> {
         match &item.data {
-            hyp::AstData::LetLocal { name, local_index, attr, .. } => {
+            hyp::AstData::LetLocal { name: _name, local_index, attr, .. } => {
                 let global_list;
                 match attr {
                     hyp::Attr::Varying =>
@@ -239,7 +258,7 @@ impl GlslEnc {
                 }).collect();
 
                 let expr = GlslAst::Block {
-                    stmts: lambda.expr.iter().map(|s| self.parse_stmt(s)).flatten().collect()
+                    stmts: self.parse_stmts(&lambda.expr)
                 };
 
                 Some(GlslAst::Fn {
@@ -274,29 +293,42 @@ impl GlslEnc {
         }
     }
 */
-    pub fn parse_stmt(&mut self, stmt: &hyp::Ast) -> Option<GlslAst> {
-        match &stmt.data {
-            // TODO: Treat this as return when in correct context
-            //Stmt::Expr(e) => Some(self.parse_expr(e)),
-            hyp::AstData::FnLocal { .. } => panic!("function not allowed here"),
-            hyp::AstData::LetLocal { name, ty, init, local_index, attr: _attr } => {
-                let name = self.ident_to_str(name);
-                //let decl_ty = self.parse_type(t);
+    pub fn parse_stmts(&mut self, stmts: &[hyp::Ast]) -> Vec<GlslAst> {
+        let mut ret = Vec::new();
 
-                let value = init.as_ref().map(|e| self.parse_expr(e)).unwrap_or(GlslAst::Undef);
+        for stmt in stmts {
+            match &stmt.data {
+                // TODO: Treat this as return when in correct context
+                //Stmt::Expr(e) => Some(self.parse_expr(e)),
+                hyp::AstData::FnLocal { .. } => panic!("function not allowed here"),
+                hyp::AstData::LetLocal { name, ty, init, local_index, attr: _attr } => {
+                    let name = self.ident_to_str(name);
+                    //let decl_ty = self.parse_type(t);
 
-                if ty.is_any() {
-                    panic!("type of local {} could not be inferred", &name);
+                    let value = init.as_ref().map(|e| self.parse_expr(e)).unwrap_or(GlslAst::Undef);
+
+                    if ty.is_any() {
+                        panic!("type of local {} could not be inferred", &name);
+                    }
+                    // TODO: Verify ty is not GlslType::Unknown
+
+                    let loc = (name, value, *local_index);
+                    if let Some(GlslAst::Locals { locs: last_locs }) = ret.last_mut() {
+                        last_locs.push(loc);
+                    } else {
+                        let mut locs = Vec::new();
+                        locs.push(loc); // TODO: Do we need name here?
+                        ret.push(GlslAst::Locals { locs });
+                    }
                 }
-                // TODO: Verify ty is not GlslType::Unknown
-
-                let mut locs = Vec::new();
-                locs.push((name, value, *local_index)); // TODO: Do we need name here?
-                
-                Some(GlslAst::Locals { locs })
+                hyp::AstData::Void => { /* Do nothing */ }
+                _ => {
+                    ret.push(self.parse_expr(stmt));
+                }
             }
-            _ => Some(self.parse_expr(stmt))
         }
+
+        ret
     }
 
     pub fn parse_expr(&mut self, expr: &hyp::Ast) -> GlslAst {
@@ -337,7 +369,7 @@ impl GlslEnc {
                 }
             }
             hyp::AstData::Loop { body } => {
-                let body_ast = body.expr.iter().map(|s| self.parse_stmt(s)).flatten().collect();
+                let body_ast = self.parse_stmts(&body.expr);
                 
                 GlslAst::Loop {
                     body: body_ast
@@ -346,7 +378,7 @@ impl GlslEnc {
             hyp::AstData::If { cond, body, else_body } => {
 
                 let cond_ast = Box::new(self.parse_expr(cond));
-                let then_ast = body.expr.iter().map(|s| self.parse_stmt(s)).flatten().collect();
+                let then_ast = self.parse_stmts(&body.expr);
 
                 GlslAst::If {
                     cond: cond_ast,
@@ -356,7 +388,7 @@ impl GlslEnc {
             }
             hyp::AstData::While { cond, body } => {
                 let cond_ast = Box::new(self.parse_expr(cond));
-                let body_ast = body.expr.iter().map(|s| self.parse_stmt(s)).flatten().collect();
+                let body_ast = self.parse_stmts(&body.expr);
 
                 GlslAst::While {
                     cond: cond_ast,
@@ -456,7 +488,7 @@ impl GlslEnc {
             hyp::AstData::Block { expr } => {
 
                 let b = GlslAst::Block {
-                    stmts: expr.iter().map(|s| self.parse_stmt(s)).flatten().collect()
+                    stmts: self.parse_stmts(expr)
                 };
 
                 b
@@ -498,7 +530,7 @@ impl GlslEnc {
                 match *local {
                     hyp::Local::Builtin { ref name, .. } =>
                         GlslAst::Path { segments: vec![name.clone()] },
-                    hyp::Local::Local { index } =>
+                    hyp::Local::Local { index, .. } =>
                         GlslAst::LocalRef { id: index },
                     hyp::Local::ModuleMember { abs_index, local_index } => {
                         self.module.used_imports.insert((abs_index, local_index));

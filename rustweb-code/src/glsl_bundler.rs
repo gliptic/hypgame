@@ -1,8 +1,9 @@
 use crate::{GlslAst, GlslModule, GlslLit, GlslType, GlslOp, GlslUnop};
-use crate::hyp_parser as hyp;
+use crate::{hyp_parser as hyp, hyp_to_glsl, conflict_tree::ConflictTree};
+use std::collections::{HashMap, HashSet};
 
 // TODO: Move this and NeedSemi to common place with JS version
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Prec(u32, i32);
 
 impl Prec {
@@ -25,7 +26,7 @@ impl Prec {
 
 
 #[derive(PartialEq)]
-pub enum NeedSemi { No, Yes }
+pub enum NeedSemi { No, Yes, Empty }
 
 const PREC_DOT_BRACKET: Prec = Prec(2, -1);
 //const PREC_NEW: Prec = Prec(1, 1);
@@ -43,7 +44,7 @@ const PREC_EQ: Prec = Prec(8, -1);
 const PREC_ANDAND: Prec = Prec(12, -1);
 // TODO const PREC_XORXOR: Prec = Prec(13, -1);
 const PREC_OROR: Prec = Prec(14, -1);
-// TODO const PREC_SELECT: Prec = Prec(15, -1);
+const PREC_SELECT: Prec = Prec(15, -1);
 const PREC_ASSIGN: Prec = Prec(16, 1);
 const PREC_COMMA: Prec = Prec(17, -1);
 const PREC_MAX: Prec = Prec(18, 0);
@@ -78,6 +79,11 @@ pub struct GlslBundler<'a> {
     pub module_infos: &'a Vec<hyp::ModuleInfo>,
 }
 
+pub struct BundledModule {
+    pub prefix: String,
+    pub exported_functions: Vec<(String, u32)>,
+}
+
 pub struct Token<'a>(&'a str, TokenKind);
 
 const LPAREN: Token<'static> = Token("(", TokenKind::Anything);
@@ -86,6 +92,16 @@ const RPAREN: Token<'static> = Token(")", TokenKind::Anything);
 macro_rules! T {
     (=) => { Token("=", TokenKind::Op) };
     (;) => { Token(";", TokenKind::Anything) };
+}
+
+fn short_name(index: usize) -> String {
+    if index < 26 {
+        return ((97 + index as u8) as char).to_string();
+    } else if index < 52 {
+        return ((65 + (index as u8 - 26)) as char).to_string();
+    } else {
+        return short_name(index % 52) + &short_name(index / 52);
+    }
 }
 
 impl Detokenizer {
@@ -210,11 +226,11 @@ impl Detokenizer {
 }
 
 impl<'a> GlslBundler<'a> {
-    pub fn new(module_infos: &Vec<hyp::ModuleInfo>, exported_local: i32) -> GlslBundler {
+    pub fn new(module_infos: &Vec<hyp::ModuleInfo>, exported_local: i32, debug: bool) -> GlslBundler {
         GlslBundler {
             buf: Detokenizer {
                 buf: String::new(),
-                minify: true,
+                minify: !debug,
                 indent_len: 0,
                 prev_token_kind: TokenKind::Anything,
             },
@@ -224,27 +240,206 @@ impl<'a> GlslBundler<'a> {
         }
     }
 
-    pub fn stmts_inner_to_glsl(&mut self, stmts: &[GlslAst]) {
-        for s in stmts {
-            self.buf.indent();
-            let need_semi = self.to_glsl(s, PREC_MAX);
-            if need_semi == NeedSemi::Yes {
-                self.buf.semi();
-                self.buf.nl();
-            } else {
-                self.buf.nl();
+    pub fn shorten_names(
+        module_infos: &mut Vec<hyp::ModuleInfo>,
+        all_used_imports: HashSet<(u32, u32)>) {
+        
+        let mut whole_ct = ConflictTree::new();
+
+        fn clone_and_annotate(ct: &ConflictTree<u32>, abs_index: u32) -> ConflictTree<(u32, u32)> {
+            let mut new_ct = ConflictTree::new();
+            new_ct.items = ct.items.iter().map(|&(id, count)| ((abs_index, id), count)).collect();
+            new_ct.children = ct.children.iter()
+                .map(|ch| clone_and_annotate(ch, abs_index)).collect();
+            new_ct
+        }
+
+        for abs_index in 0..module_infos.len() {
+            let module = &mut module_infos[abs_index];
+
+            if module.language == hyp::Language::Glsl {
+                let mut ct = clone_and_annotate(&module.conflict_tree, abs_index as u32);
+
+                // Move varyings (or outputs connected to inputs) to whole_ct
+                ct.items.drain_filter(|&mut (id, count)| { // TEMP!
+                //module.conflict_tree.items.clone().drain_filter(|&mut (id_, count)| {
+                    //let id = (abs_index as u32, id_);
+                    if all_used_imports.contains(&id) {
+                        let local = &module.locals[id.1 as usize];
+                        println!("moving {}.{}", &module.name, &local.1);
+                        whole_ct.items.push((id, count));
+                        true
+                    } else {
+                        false
+                    }
+                });
+                whole_ct.add_child(ct); // TEMP
+            }
+        }
+
+        whole_ct.compute_sum_of_max();
+
+        // Rename
+        let mut locals = vec![];
+        let mut name_index = 0;
+        
+        loop {
+            let more = whole_ct.assign_best(&mut locals);
+
+            for &(abs_index, local_index) in &locals {
+                let new_name = short_name(name_index);
+                let module = &mut module_infos[abs_index as usize];
+                let local = &mut module.locals[local_index as usize];
+
+                println!("renaming {}.{} to {} ({}.{})", &module.name, &local.1, &new_name, abs_index, local_index);
+                local.1 = new_name;
+            }
+            //dbg!(&whole_ct);
+            locals.clear();
+            name_index += 1;
+            if !more {
+                break;
             }
         }
     }
 
-    pub fn stmts_to_glsl(&mut self, stmts: &[GlslAst]) {
-        self.buf.token(Token("{", TokenKind::Anything));
-        self.buf.nl();
-        self.buf.indent_len += 1;
-        self.stmts_inner_to_glsl(stmts);
-        self.buf.indent_len -= 1;
-        self.buf.indent();
-        self.buf.token(Token("}", TokenKind::Anything));
+    pub fn bundle(
+        module_infos: &mut Vec<hyp::ModuleInfo>,
+        module_lambdas: &Vec<hyp::AstLambda>,
+        module_order: &[u32],
+        debug: bool) -> HashMap<usize, BundledModule> {
+
+        /*
+        vertex_glsl {
+            varying ...
+        }
+        fragment_glsl {
+        }
+
+        ->
+
+        {
+            varying ...
+            vertex_glsl {
+                varying ...
+            }
+            fragment_glsl {
+            }
+        }
+        */
+
+
+        let mut all_used_imports = HashSet::new();
+        let mut converted_modules = vec![];
+        
+        for order_index in 0..module_order.len() {
+            let abs_index = module_order[order_index] as usize;
+            let module_lambda = &module_lambdas[abs_index];
+
+            //println!("bundling #{}: {}", module_index, &self.module_infos[module_index as usize].name);
+            let module = &module_infos[abs_index];
+
+            if module.language == hyp::Language::Glsl {
+                println!("Compiling glsl {}", &module.name);
+                let mut enc = hyp_to_glsl::GlslEnc::new();
+                enc.parse_hyp(&module_lambda.expr);
+
+                for ui in &enc.module.used_imports {
+                    all_used_imports.insert(*ui);
+                }
+
+                converted_modules.push((abs_index, enc.module));
+            }
+        }
+
+        Self::shorten_names(module_infos, all_used_imports);
+
+        let mut bundled_modules = HashMap::new();
+
+        for (abs_index, converted_module) in converted_modules {
+            
+            let module = &module_infos[abs_index];
+
+            let main = {
+                    let mut glsl_bundler = GlslBundler::new(module_infos, -1, debug);
+                    glsl_bundler.current_module = abs_index;
+                    glsl_bundler.module_to_glsl(&converted_module);
+                    glsl_bundler.buf.buf
+                };
+
+            let mut exported_functions = Vec::new();
+
+            for &exported_index in &module.exports {
+                if module.locals[exported_index as usize].0.is_fn() {
+                    let mut glsl_bundler = GlslBundler::new(module_infos, exported_index as i32, debug);
+                    glsl_bundler.current_module = abs_index;
+                    glsl_bundler.module_to_glsl(&converted_module);
+                    
+                    exported_functions.push((glsl_bundler.buf.buf, exported_index));
+                }
+            }
+
+            bundled_modules.insert(abs_index, BundledModule {
+                prefix: main,
+                exported_functions
+            });
+        }
+
+        bundled_modules
+    }
+
+    pub fn stmts_inner_to_glsl(&mut self, stmts: &[GlslAst], slot: Prec, commas: bool) {
+        let mut first = true;
+        let prec = if stmts.len() == 1 { slot } else { PREC_COMMA };
+
+        for s in stmts {
+            if first {
+                first = false;
+            } else if commas {
+                self.buf.comma();
+                self.buf.pretty_space();
+            }
+
+            if !commas {
+                self.buf.indent();
+            }
+
+            let need_semi = self.to_glsl(s, prec);
+            if !commas {
+                match need_semi {
+                    NeedSemi::Yes => {
+                        self.buf.semi();
+                        self.buf.nl();
+                    }
+                    NeedSemi::No => {
+                        self.buf.nl();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    pub fn stmts_to_glsl(&mut self, stmts: &[GlslAst], can_skip_braces: bool, slot: Prec) -> NeedSemi {
+        if can_skip_braces && stmts.len() > 0
+         && stmts.iter().all(|x| x.is_expr()) {
+
+            let p = stmts.len() != 1 && self.buf.wrap_p(slot, PREC_COMMA);
+            self.stmts_inner_to_glsl(stmts, slot, true);
+            
+            self.buf.unwrap_p(p);
+            NeedSemi::Yes
+
+        } else {
+            self.buf.token(Token("{", TokenKind::Anything));
+            self.buf.nl();
+            self.buf.indent_len += 1;
+            self.stmts_inner_to_glsl(stmts, PREC_MAX, false);
+            self.buf.indent_len -= 1;
+            self.buf.indent();
+            self.buf.token(Token("}", TokenKind::Anything));
+            NeedSemi::No
+        }
     }
 
     pub fn ident_to_str(&self, ident: &hyp::Ident) -> String {
@@ -283,7 +478,7 @@ impl<'a> GlslBundler<'a> {
             }
         }
 
-        self.stmts_inner_to_glsl(&module.items);
+        self.stmts_inner_to_glsl(&module.items, PREC_MAX, false);
     }
 
     pub fn to_glsl(&mut self, ast: &GlslAst, slot: Prec) -> NeedSemi {
@@ -292,7 +487,7 @@ impl<'a> GlslBundler<'a> {
 
                 if (*exported && *id as i32 != self.exported_local)
                  || (!*exported && self.exported_local >= 0) {
-                    return NeedSemi::No;
+                    return NeedSemi::Empty;
                 }
 
                 let name = &self.module_infos[self.current_module].locals[*id as usize].1;
@@ -341,7 +536,6 @@ impl<'a> GlslBundler<'a> {
                     }
                     self.buf.ident(piece);
                 }
-                
                 self.buf.unwrap_p(p);
                 NeedSemi::Yes
             },
@@ -389,8 +583,28 @@ impl<'a> GlslBundler<'a> {
                 NeedSemi::Yes
             },
             GlslAst::Block { stmts } => {
-                self.stmts_to_glsl(stmts);
-                NeedSemi::No
+                /*
+                if stmts.len() != 0 && ast.is_expr() {
+                    let prec = if stmts.len() == 1 { slot } else { PREC_COMMA };
+
+                    let p = stmts.len() != 1 && self.buf.wrap_p(slot, PREC_COMMA);
+                    let mut first = true;
+                    for expr in stmts {
+                        if first {
+                            first = false;
+                        } else {
+                            self.buf.comma();
+                        }
+                        self.to_glsl(expr, prec);
+                    }
+                    
+                    self.buf.unwrap_p(p);
+                    NeedSemi::Yes
+                } else {
+                */
+                // TODO: Better test for can_skip_braces
+                self.stmts_to_glsl(stmts, slot != PREC_MAX, slot)
+                /*}*/
             }/*,
             &GlslAst::Global { index, constant, ref value } => {
                 let name = &self.module_infos[self.current_module].mapped_names[index as usize];
@@ -404,18 +618,31 @@ impl<'a> GlslBundler<'a> {
             },*/
             GlslAst::Locals { locs } => {
                 let mut first = true;
+                let mut prev_ty = hyp::AstType::None;
+
                 //self.buf.push_str("var ");
                 for i in 0..locs.len() {
-                    if first {
-                        first = false;
-                    } else {
-                        //self.buf.push_str(", ");
-                        self.buf.comma();
-                    }
                     let id = locs[i].2;
                     let (ty, name) = &self.module_infos[self.current_module].locals[id as usize];
 
-                    self.buf.type_to_glsl(ty);
+                    if first || ty != &prev_ty {
+
+                        if !first {
+                            self.buf.semi();
+                            self.buf.nl();
+                            self.buf.indent();
+                        }
+
+                        first = false;
+
+                        self.buf.type_to_glsl(ty);
+                        prev_ty = ty.clone();
+                        //self.buf.push_str(", ");
+                        //self.buf.comma();
+                    } else {
+                        self.buf.comma();
+                    }
+                    
                     //let name = &locs[i].0;
                     self.buf.ident(name);
                     let init = &locs[i].1;
@@ -425,8 +652,8 @@ impl<'a> GlslBundler<'a> {
                         self.buf.assign();
                         self.to_glsl(&init, PREC_ASSIGN.on_right());
                     }
-                    self.buf.semi();
                 }
+                self.buf.semi();
                 
                 NeedSemi::No
             },
@@ -453,25 +680,49 @@ impl<'a> GlslBundler<'a> {
                 NeedSemi::Yes
             },*/
             GlslAst::If { cond, then_branch, else_branch } => {
-                // TODO: Use ?: when needed
-                self.buf.ident("if");
-                self.buf.pretty_space();
-                self.buf.lparen();
-                self.to_glsl(cond, PREC_MAX);
-                self.buf.rparen();
-                self.buf.pretty_space();
-                self.stmts_to_glsl(then_branch);
-                match else_branch {
-                    Some(e) => {
-                        //self.buf.push_str(" else ");
-                        self.buf.pretty_space();
-                        self.buf.ident("else");
-                        self.buf.pretty_space();
-                        self.to_glsl(e, PREC_MAX);
-                    },
-                    None => {}
+                if ast.is_expr() {
+                    let p = self.buf.wrap_p(slot, PREC_SELECT);
+                    self.to_glsl(cond, PREC_SELECT.on_left());
+                    self.buf.pretty_space();
+                    // TODO: Some of these tolerate anything after
+                    self.buf.op("?");
+                    self.buf.pretty_space();
+                    // TODO: Avoid clone etc.
+                    self.to_glsl(&GlslAst::Block { stmts: (*then_branch).clone() }, PREC_SELECT);
+                    self.buf.pretty_space();
+                    self.buf.op(":");
+                    self.buf.pretty_space();
+                    if let Some(else_ast) = else_branch {
+                        self.to_glsl(else_ast, PREC_SELECT);
+                    } else {
+                        // TODO: Use some other literal based on what the type on the other side is
+                        self.buf.token(Token("0", TokenKind::Alphanum));
+                    }
+                    self.buf.unwrap_p(p);
+                    NeedSemi::Yes
+                } else {
+                    self.buf.ident("if");
+                    self.buf.pretty_space();
+                    self.buf.lparen();
+                    self.to_glsl(cond, PREC_MAX);
+                    self.buf.rparen();
+                    self.buf.pretty_space();
+                    let mut need_semi = self.stmts_to_glsl(then_branch, true, PREC_MAX);
+                    match else_branch {
+                        Some(e) => {
+                            if need_semi == NeedSemi::Yes {
+                                self.buf.semi();
+                            }
+                            //self.buf.push_str(" else ");
+                            self.buf.pretty_space();
+                            self.buf.ident("else");
+                            self.buf.pretty_space();
+                            need_semi = self.to_glsl(e, PREC_MAX);
+                        },
+                        None => {}
+                    }
+                    need_semi
                 }
-                NeedSemi::No
             },
             GlslAst::While { cond, body } => {
                 self.buf.ident("for");
@@ -481,8 +732,7 @@ impl<'a> GlslBundler<'a> {
                 self.buf.semi();
                 self.buf.rparen();
                 self.buf.pretty_space();
-                self.stmts_to_glsl(body);
-                NeedSemi::No
+                self.stmts_to_glsl(body, true, PREC_MAX)
             },
             GlslAst::Loop { body } => {
                 self.buf.ident("for");
@@ -491,8 +741,7 @@ impl<'a> GlslBundler<'a> {
                 self.buf.semi();
                 self.buf.rparen();
                 self.buf.pretty_space();
-                self.stmts_to_glsl(body);
-                NeedSemi::No
+                self.stmts_to_glsl(body, true, PREC_MAX)
             },
             GlslAst::Unary { value, op } => {
                 let prec = match op {

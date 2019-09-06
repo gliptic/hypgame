@@ -4,21 +4,14 @@ use crate::js_ast::{JsLit, JsOp, JsUnop, JsAst, JsModule, JsPattern};
 use crate::hyp_parser::{self as hyp};
 
 pub struct JsEnc {
-    //pub locals: HashMap<String, JsLocal>,
-    //pub local_list: Vec<String>,
     pub module: JsModule,
     pub errors: Vec<hyp::ParseError>,
-    //pub exported_decls: Vec<(String, String, syn::ItemFn)>,
 }
 
 impl JsEnc {
     pub fn new() -> JsEnc {
-        let mut enc = JsEnc {
-            //locals: HashMap::new(),
-            //local_list: Vec::new(),
-            //exported_decls: Vec::new(),
+        let enc = JsEnc {
             module: JsModule {
-                //name,
                 items: Vec::new()
             },
             errors: Vec::new()
@@ -34,22 +27,11 @@ impl JsEnc {
         self.errors.push(hyp::ParseError(ast.loc, s));
     }
 
-/*
-    pub fn local_to_ast(&self, local: JsLocal) -> JsAst {
-        match local {
-            //JsLocal::ModuleRef(module) => JsAst::Path { path: vec![self.module.imports[module as usize].clone()] },
-            JsLocal::ModuleRef(module) => JsAst::ModuleRef { module },
-            JsLocal::ModuleMember(module, member) => JsAst::ModuleMember { module, member },
-            JsLocal::SelfMember(index) => JsAst::SelfMember { index },
-            JsLocal::Builtin(builtin) => JsAst::Builtin { builtin },
-            JsLocal::Local(name) => JsAst::Path { path: vec![name] },
-        }
-    }
-*/
-
     pub fn map_unop(&mut self, ast: &hyp::Ast, op: &hyp::Ident) -> JsUnop {
         match &op[..] {
             "-" => JsUnop::Minus,
+            "+" => JsUnop::Plus,
+            "~" => JsUnop::BitNot,
             "!" => JsUnop::Not,
             _ => {
                 self.add_error(&ast, "unimplemented unary op");
@@ -79,6 +61,7 @@ impl JsEnc {
             ">>" => JsOp::Shr,
             ">>>" => JsOp::Lshr,
             "==" => JsOp::Eq,
+            "===" => JsOp::Eq,
             "<" => JsOp::Lt,
             "<=" => JsOp::Le,
             "!=" => JsOp::Ne,
@@ -91,19 +74,6 @@ impl JsEnc {
         }
     }
 
-/*
-    pub fn begin_scope(&mut self) -> usize {
-        self.local_list.len()
-    }
-
-    pub fn end_scope(&mut self, local_count: usize) {
-        while self.local_list.len() > local_count {
-            let name = self.local_list.pop().unwrap();
-            self.locals.remove(&name);
-        }
-    }
-*/
-
     pub fn check_assignable(&self, expr: &JsAst) {
         match expr {
             JsAst::Global { constant: true, .. } =>
@@ -115,6 +85,7 @@ impl JsEnc {
     pub fn parse_expr(&mut self, expr: &hyp::Ast) -> JsAst {
         
         match &expr.data {
+            hyp::AstData::Void => { JsAst::Undefined }
             hyp::AstData::ConstNum { v } => JsAst::Lit { lit: JsLit::Int(*v) },
             hyp::AstData::ConstFloat { v } => JsAst::Lit { lit: JsLit::Float(*v) },
             hyp::AstData::ConstStr { v } => JsAst::Lit { lit: JsLit::Str(v.clone()) },
@@ -164,6 +135,18 @@ impl JsEnc {
                     func: Box::new(self.parse_expr(fun)),
                     args: params.iter().map(|x| self.parse_expr(x)).collect()
                 },
+            hyp::AstData::NewObject { assignments } => {
+                JsAst::NewObject {
+                    assignments: assignments.iter().map(|(name, e)|
+                        (name.clone(), self.parse_expr(e))).collect()
+                }
+            }
+            hyp::AstData::NewCtor { ctor, params } => {
+                JsAst::NewCtor {
+                    ctor: Box::new(self.parse_expr(ctor)),
+                    params: params.iter().map(|e| self.parse_expr(e)).collect()
+                }
+            }
             hyp::AstData::Ident { s } =>
                 JsAst::Path { path: vec![self.ident_to_str(s)] },
             hyp::AstData::Field { base, member } => {
@@ -219,6 +202,26 @@ impl JsEnc {
                     else_branch: else_body.as_ref().map(|x| Box::new(self.parse_expr(x)))
                 }
             }
+            hyp::AstData::For { pat, iter: (from, to), body, .. } => {
+                let body_ast = body.expr.iter().map(|s| self.parse_stmt(s)).collect();
+
+                JsAst::For {
+                    pre: Box::new(JsAst::Locals {
+                        local_indexes: vec![*pat],
+                        values: vec![self.parse_expr(from)]
+                    }),
+                    cond: Box::new(JsAst::Binary { 
+                        left: Box::new(JsAst::Local { index: *pat }),
+                        op: JsOp::Lt,
+                        right: Box::new(self.parse_expr(to))
+                    }),
+                    post: Box::new(JsAst::Unary {
+                        value: Box::new(JsAst::Local { index: *pat }),
+                        op: JsUnop::PreInc
+                    }),
+                    body: body_ast
+                }
+            }
             hyp::AstData::Block { expr } => {
 
                 let b = JsAst::Block {
@@ -227,6 +230,8 @@ impl JsEnc {
 
                 b
             }
+            hyp::AstData::Break =>
+                JsAst::Break,
             hyp::AstData::While { cond, body } => {
                 let cond_ast = Box::new(self.parse_expr(cond));
                 let body_ast = body.expr.iter().map(|s| self.parse_stmt(s)).collect();
@@ -251,7 +256,7 @@ impl JsEnc {
                         JsAst::ModuleMember { abs_index, local_index },
                     hyp::Local::Builtin { ref name, .. } =>
                         JsAst::Path { path: vec![name.clone()] },
-                    hyp::Local::Local { index } =>
+                    hyp::Local::Local { index, .. } =>
                         JsAst::Local { index }
                 }
             }
@@ -377,28 +382,12 @@ impl JsEnc {
                 //let abs_index = self.module.import_map[*rel_index as usize];
                 
                 //self.add_local(&name, JsLocal::ModuleRef(abs_index));
+                
+
                 JsAst::Use { name, rel_index: *rel_index }
             }
-            hyp::AstData::FnLocal { name, lambda, local_index, .. } => {
-                let name = self.ident_to_str(name);
-
-                //self.add_local(&name, JsLocal::SelfMember(index));
-
-/* TODO
-                let exported = match item_fn.vis {
-                    Visibility::Public(_) => true,
-                    _ => false
-                };
-                let exported = false;
-
-                if exported {
-                    let exported_name = format!("{}_{}", self.module.name, &name);
-                    // TODO? self.exported_decls.push((name.clone(), exported_name, item_fn.clone()));
-                }
-
-                self.module.exports.push(name);
-                */
-
+            hyp::AstData::FnLocal { lambda, local_index, .. } => {
+                
                 let exported = false; // TODO
 
                 let args: Vec<JsPattern> = lambda.params.iter().map(|p| {
@@ -413,7 +402,7 @@ impl JsEnc {
 
                 JsAst::Fn { index: *local_index, exported, args, expr: Box::new(expr) }
             }
-            hyp::AstData::LetLocal { name, ty, init, local_index, attr: _attr } => {
+            hyp::AstData::LetLocal { name: _name, ty: _ty, init, local_index, attr: _attr } => {
                 //let name = self.ident_to_str(name);
                 
                 let values = init.iter().map(|i| self.parse_expr(i)).collect();;

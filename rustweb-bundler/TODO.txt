@@ -24,6 +24,8 @@ Hyp:
 * Store dependency information/side-effects for reordering and let-inlining
     (Sea of nodes?)
 * Add @inline attribute for functions and maybe lets too (works like a macro)
+* Add @debug sections that can be turned off in debug build
+* Add "for i in A..B"
 
 GLSL:
 * Consider #define instead of function definiton if the parameters to a function are side-effect free
@@ -36,6 +38,11 @@ GLSL:
 * A vector ctor with all the same parameter values can be specified with just one parameter with that value
     * Matrices are the same, but the single value is used for the diagonal
     * Matrices are column-wise
-* Common-prefixes in shaders in a shader module can be trivially moved over to the common part
 * Vertex shaders should be able to 'use' each other so that the attributes get the same names
+* Transform: { a, b, ..., return z } -> return { a, b, ..., z }
+* vecN/matN(-1,-2,-3) -> -vecN/matN(1,2,3)
+
+Js:
+* Change lambdas to () => {} syntax
+* Port selection operator from glsl
 

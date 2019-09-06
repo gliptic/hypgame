@@ -522,7 +522,7 @@ export async function startGame() {
             var src = audio.createBufferSource();
             var pan = audio.createStereoPanner();
             var gain = audio.createGain();
-            gain.gain.value = 0.5;
+            gain.gain.value = 0.3;
             pan.pan.value = 0.8;
 
             src.buffer = buf;

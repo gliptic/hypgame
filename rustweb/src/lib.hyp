@@ -4,5 +4,8 @@ use render
 @binary use "data.txt" as data
 
 fn foo([x,y]: u32) {
-    return 0
+    return new {
+        x,
+        y: x
+    }
 }

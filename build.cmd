@@ -1,6 +1,7 @@
 cargo run --bin rustweb-bundler ./rustweb/src/lib.hyp ^
-.\rustweb\pkg\rustweb.js ^
-.\rustweb\pkg\rustweb.min.js
+.\rustweb\test\rustweb.js ^
+.\rustweb\pkg\rustweb.min.js ^
+.\rustweb\pkg\rustweb.zip
 
 REM --package rustweb-code --lib
 

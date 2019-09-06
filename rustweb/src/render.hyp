@@ -67,7 +67,7 @@ fn initGl(canvas) {
     gl := canvas.getContext("webgl")
     canvas_w := canvas.width
     canvas_h := canvas.height
-    gl.clearColor(0.2, 0.25, 0.4, 1.0)
+    gl.clearColor(0.3, 0.35, 0.5, 1.0)
 }
 
 pub fn createBuffer(bufferType, size, usage) {
@@ -83,18 +83,40 @@ pub fn createTexture(image, side, ty) {
     gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
     gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
     gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    gl.texImage2D(GL_TEXTURE_2D, 0, ty, side, side, 0, ty, GL_UNSIGNED_BYTE, Uint8Array.new(image.buffer))
-    console.log("texImage")
+    gl.texImage2D(GL_TEXTURE_2D, 0, ty, side, side, 0, ty, GL_UNSIGNED_BYTE, new Uint8Array(image.buffer))
+    @debug console.log("texImage")
     return texture
 }
 
 pub fn setViewTransform(shader) {
     #gl.uniformMatrix3fv(gl.getUniformLocation(shader, "m"), 0, viewTrans)
-    gl.uniform1f(gl.getUniformLocation(shader, vertex_glsl.invAr), canvas_h / canvas_w)
+    gl.uniform1f(gl.getUniformLocation(shader, vertex_glsl.ar), canvas_w / canvas_h)
+    gl.uniformMatrix2fv(gl.getUniformLocation(shader, vertex_glsl.viewMat),
+        0,
+        viewTrans)
 }
 
 pub fn color(c) {
     col := c
+}
+
+pub fn setView2([aimx, aimy]) {
+    #[=
+    let z = -r.from[0] * step
+    let x = r.from[1] * step
+    [ 0 -1
+      1  0
+    ]
+
+    viewTrans := [
+        aimx, -aimy,
+        aimy, aimx
+    ]
+    =]
+
+    viewTrans := [
+        -aimy, -aimx,
+        aimx,  -aimy ]
 }
 
 pub fn setView(x, y, rotx, roty, zoom) {
@@ -111,23 +133,16 @@ pub fn setView(x, y, rotx, roty, zoom) {
     vecmath.trans(viewTrans, -x, -y)
 }
 
-#[
-pub fn flush_buf(buf_p, cou) {
-    gl.bufferSubData(GL_ARRAY_BUFFER, 0, wasm_U8.subarray(buf_p, buf_p + cou * 5 * 4))
-    gl.drawArrays(GL_TRIANGLES, 0, cou)
-}
-]
-
 pub fn flush() {
     if (vertexData.length) {
         gl.vertexAttribPointer(locPos, 3, GL_FLOAT, 0, VERTEX_SIZE, 0)
         gl.vertexAttribPointer(locUV, 2, GL_FLOAT, 0, VERTEX_SIZE, 12)
         gl.vertexAttribPointer(locColor, 4, GL_FLOAT, 0, VERTEX_SIZE, 20)
-        gl.bufferSubData(GL_ARRAY_BUFFER, 0, Float32Array.new(vertexData))
+        gl.bufferSubData(GL_ARRAY_BUFFER, 0, new Float32Array(vertexData))
         #console.log(vertexData.length, vertexData.length / (VERTEX_SIZE / 4))
-        console.log(vertexData)
+        #@debug console.log(vertexData)
         gl.drawArrays(GL_TRIANGLES, 0, vertexData.length / (VERTEX_SIZE / 4))
-        #vertexData.length := 0
+        vertexData.length := 0
     }
     currentTexture := null
 }
@@ -227,4 +242,51 @@ pub fn init(canvas) {
     gl.enableVertexAttribArray(locColor)
     
     gl.activeTexture(GL_TEXTURE0)
+}
+
+pub fn drawText(fontBits, whiteTex, text, x, y) {
+    for i in 0..(text.length) {
+        let ch = text.charCodeAt(i);
+
+        var id = 200;
+        if (ch >= 48 && ch <= 57) {
+            id := ch - 48
+        } else if (ch >= 65 && ch <= 90) {
+            id := ch - 65 + 10
+        }
+
+        var scale = 1;
+
+        var step = 10 * scale / 3;
+        for dx in 0..3 {
+            for dy in 0..5 {
+                let pos = (4 - dy) * 36 * 3 + id * 3 + dx
+                if ((fontBits[pos >> 3] >> (pos & 7)) & 1) {
+
+                    var z = 1000
+                    #[=
+                    render.wall3d(whiteTex,
+                        x + step * dx, z,
+                        x + step * (dx + 1), z,
+                        dy * step, (dy + 1) * step,
+                        0, 0, 1, 1)
+                    =]
+
+                    wall3d(whiteTex,
+                            z, x + step*dx,
+                            z, x + step*dx + step,
+                            y + dy * step,
+                            y + dy * step - step,
+                            0, 0, 1, 1);
+                }
+            }
+        }
+
+        x += 12 * scale
+        #[=
+        } else {
+            x += 5;
+        }=]
+        
+    }
 }

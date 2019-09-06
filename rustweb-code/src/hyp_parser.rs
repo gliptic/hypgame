@@ -1,5 +1,6 @@
 use std::collections::{HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use crate::conflict_tree::ConflictTree;
 
 const LEX_DIGIT: u16 = 1 << 0;
 const LEX_BEG_IDENT: u16 = 1 << 1;
@@ -46,6 +47,9 @@ const TT_PUB: u16 = 29;
 const TT_AT: u16 = 30;
 const TT_CONSTFLOAT: u16 = 31;
 const TT_SEMICOLON: u16 = 32;
+const TT_NEW: u16 = 33;
+const TT_BREAK: u16 = 34;
+const TT_IN: u16 = 35;
 const TT_EOF: u16 = 254;
 const TT_INVALID: u16 = 255;
 
@@ -61,7 +65,7 @@ pub struct ParseError(pub Span, pub &'static str);
 pub type ParseResult<T> = Result<T, ParseError>;
 pub type ModuleResult<T> = Result<T, (Vec<u8>, PathBuf, ParseError)>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ParamDef {
     //pub name: Ident,
     pub pat: Pattern,
@@ -81,10 +85,10 @@ pub enum Local {
     ModuleMember { abs_index: u32, local_index: u32 },
     Builtin { name: String, ty: AstType },
     //SelfMember { member_index: u32 },
-    Local { index: u32 }
+    Local { index: u32, inline: Option<Box<Ast>> }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AstLambda {
     pub params: Vec<ParamDef>,
     pub param_locals: Vec<u32>,
@@ -92,7 +96,7 @@ pub struct AstLambda {
     pub return_type: AstType
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum AppKind {
     Normal,
     Binary,
@@ -105,7 +109,9 @@ pub enum Attr {
     Attribute,
     Varying,
     Uniform,
-    Binary
+    Binary,
+    Inline,
+    Debug
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,7 +124,7 @@ pub enum Language {
 #[derive(Clone, Debug)]
 pub struct Use(pub Attr, pub Ident);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum AstData {
     ConstNum { v: u64 },
     ConstFloat { v: f64 },
@@ -131,16 +137,21 @@ pub enum AstData {
     LetLocal { name: Ident, ty: AstType, init: Option<AstRef>, local_index: u32, attr: Attr },
     FnLocal { name: Ident, lambda: AstLambda, local_index: u32, exported: bool },
     Field { base: AstRef, member: AstRef },
+    For { name: Ident, pat: u32, iter: (AstRef, AstRef), body: AstLambda },
     Index { base: AstRef, index: AstRef }, // TODO: Same as above?
     Array { elems: Vec<Ast> },
     If { cond: AstRef, body: AstLambda, else_body: Option<AstRef> },
     While { cond: AstRef, body: AstLambda },
     Loop { body: AstLambda },
+    Break,
     Return { value: Option<AstRef> },
     Use { name: Ident, rel_index: u32 },
+    NewObject { assignments: Vec<(Ident, Ast)> },
+    NewCtor { ctor: Box<Ast>, params: Vec<Ast> },
+    Void
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AstType {
     None,
     Any,
@@ -206,19 +217,20 @@ impl AstType {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Span(pub usize, pub usize);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Ast {
     pub ty: AstType,
     pub loc: Span,
+    pub attr: Attr,
     pub data: AstData
 }
 
 // TODO: ModuleInfo is a very large subset of Module
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Module {
     pub lambda: AstLambda,
     pub src: Vec<u8>,
@@ -239,7 +251,34 @@ pub struct ModuleInfo {
     pub exports: Vec<u32>, // indexes into locals
     pub exports_rev: HashMap<Ident, u32>,
     pub import_map: Vec<u32>,
+    pub conflict_tree: ConflictTree<u32>,
     pub language: Language,
+}
+
+pub fn print_line_at(data: &[u8], err: &ParseError, path: &Path) {
+    let mut start = (err.0).0;
+    while start > 0 && data[start - 1] != b'\n' {
+        start -= 1;
+    }
+    let mut line = 1;
+    let mut col = 1;
+    for &d in &data[..(err.0).0] {
+        if d == b'\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+
+    let mut stop = (err.0).0;
+    while stop < data.len() && data[stop + 1] != b'\n' {
+        stop += 1;
+    }
+
+    println!("--> {}:{}:{}", &path.display(), line, col);
+    println!(" | {}", std::str::from_utf8(&data[start..stop]).unwrap());
+    println!(" {}", err.1);
 }
 
 impl ModuleInfo {
@@ -251,9 +290,16 @@ impl ModuleInfo {
             locals: module.locals,
             exports: module.exports,
             exports_rev: module.exports_rev,
+            conflict_tree: ConflictTree::new(),
             import_map,
             language: module.language
         })
+    }
+
+    pub fn print_line_at(&self, err: &ParseError) {
+        let data = &self.src;
+        let path = &self.path;
+        print_line_at(data, err, path);
     }
 }
 
@@ -325,21 +371,23 @@ impl Parser {
             (b'.', ltab_pair(LEX_SINGLE_CHAR, TT_DOT)),
             //(b'?', ltab_pair(LEX_SINGLE_CHAR, TT_QUESTIONMARK)),
             (b':', ltab_pair(LEX_OP, 0)),
-            (b'=', ltab_pair(LEX_OP, 0)),
-            (b'|', ltab_pair(LEX_OP, 0)),
-            (b'!', ltab_pair(LEX_OP, 0)),
-            (b'@', ltab_pair(LEX_OP, 1)),
-            (b'&', ltab_pair(LEX_OP, 1)),
-            (b'<', ltab_pair(LEX_OP, 2)),
-            (b'>', ltab_pair(LEX_OP, 2)),
-            (b'+', ltab_pair(LEX_OP, 3)),
-            (b'-', ltab_pair(LEX_OP, 3)),
-            (b'*', ltab_pair(LEX_OP, 4)),
-            (b'%', ltab_pair(LEX_OP, 4)),
-            (b'/', ltab_pair(LEX_OP, 4)),
+            (b'|', ltab_pair(LEX_OP, 1)),
+            (b'!', ltab_pair(LEX_OP, 1)),
+            (b'@', ltab_pair(LEX_OP, 2)),
+            (b'&', ltab_pair(LEX_OP, 2)),
+            (b'^', ltab_pair(LEX_OP, 2)),
+            (b'=', ltab_pair(LEX_OP, 3)),
+            (b'<', ltab_pair(LEX_OP, 3)),
+            (b'>', ltab_pair(LEX_OP, 3)),
+            (b'+', ltab_pair(LEX_OP, 4)),
+            (b'-', ltab_pair(LEX_OP, 4)),
+            (b'*', ltab_pair(LEX_OP, 5)),
+            (b'%', ltab_pair(LEX_OP, 5)),
+            (b'/', ltab_pair(LEX_OP, 5)),
+            (b'~', ltab_pair(LEX_OP, 5)),
         ];
 
-        for &(c, lt) in &charmaps {
+        for &(c, lt) in &charmaps[..] {
             lextable[c as usize] = lt;
         }
 
@@ -401,16 +449,24 @@ impl Parser {
                 b"while" => TT_WHILE,
                 b"loop" => TT_LOOP,
                 b"for" => TT_FOR,
+                b"in" => TT_IN,
                 b"return" => TT_RETURN,
                 b"if" => TT_IF,
                 b"else" => TT_ELSE,
                 b"use" => TT_USE,
+                b"new" => TT_NEW,
+                b"break" => TT_BREAK,
                 _ => {
                     self.token_ident = String::from_utf8_lossy(&self.src[ident_beg..ident_end]).into_owned();
                     let prec_data = (lexcat >> 8) as u8;
                     
                     if cont_mask == LEX_OP {
-                        if ident_slice.ends_with(b"=") {
+                        if ident_slice == b":="
+                        || ident_slice == b"+="
+                        || ident_slice == b"-="
+                        || ident_slice == b"*="
+                        || ident_slice == b"/="
+                        || ident_slice == b"%=" {
                             self.token_prec = 0;
                             self.is_rtl = true;
                         } else {
@@ -522,7 +578,10 @@ impl Parser {
                     self.cur += 1;
                 }
 
-                if ch == b'.' {
+                // TODO: Require a digit after . for disambiguation
+                if ch == b'.'
+                && self.src[self.cur + 1] != b'.' {
+
                     self.cur += 1;
                     loop {
                         ch = self.src[self.cur];
@@ -619,7 +678,7 @@ impl Parser {
     }
 
     pub fn new_app(&mut self, fun: AstRef, params: Vec<Ast>, kind: AppKind) -> Ast {
-        Ast { loc: self.span(), ty: AstType::Any, data: AstData::App { fun, params, kind } }
+        Ast { loc: self.span(), attr: Attr::None, ty: AstType::Any, data: AstData::App { fun, params, kind } }
     }
 
     pub fn new_lambda(&mut self, params: Vec<ParamDef>, param_locals: Vec<u32>, return_type: AstType) -> AstLambda {
@@ -731,41 +790,81 @@ impl Parser {
     pub fn rprimary_del(&mut self) -> ParseResult<Ast> {
         let r = match self.tt {
             TT_CONSTINT => {
-                Ast { loc: self.span(), ty: AstType::U64, data: AstData::ConstNum { v: self.token_number } }
+                Ast { loc: self.span(), attr: Attr::None, ty: AstType::U64, data: AstData::ConstNum { v: self.token_number } }
             },
             TT_CONSTFLOAT => {
-                Ast { loc: self.span(), ty: AstType::F64, data: AstData::ConstFloat { v: self.token_float } }
+                Ast { loc: self.span(), attr: Attr::None, ty: AstType::F64, data: AstData::ConstFloat { v: self.token_float } }
             },
             TT_CONSTSTR => {
                 Ast {
                     loc: self.span(),
+                    attr: Attr::None,
                     ty: AstType::Str,
                     data: AstData::ConstStr {
                         v: std::mem::replace(&mut self.token_ident, String::new())
                     }
                 }
             },
+            TT_NEW => {
+                self.next();
+                if self.test(TT_LBRACE) {
+                    let mut assignments = Vec::new();
+                    while self.tt != TT_RBRACE && self.tt != TT_EOF {
+                        let name = self.check_ident()?;
+                        let v;
+                        if self.test(TT_COLON) {
+                            v = self.rexpr()?;
+                        } else {
+                            v = self.ast_anyty(AstData::Ident {
+                                s: name.clone()
+                            });
+                        }
+
+                        assignments.push((name, v));
+
+                        if !self.test_comma_or_semi() {
+                            break;
+                        }
+                    }
+
+                    self.ast_anyty(AstData::NewObject { assignments })
+                } else {
+                    let ctor = self.rprimary_del()?;
+                    self.next();
+
+                    let mut params = Vec::new();
+                    self.check(TT_LPAREN)?;
+                        
+                    self.rrecord_body(&mut params)?;
+                    self.peek_check(TT_RPAREN)?;
+
+                    self.ast_anyty(AstData::NewCtor {
+                        ctor: Box::new(ctor),
+                        params
+                    })
+                }
+            }
             TT_IDENT => {
                 //self.find_val_local(self.token_ident)
                 let ident = std::mem::replace(&mut self.token_ident, Ident::new());
                 self.ast_anyty(AstData::Ident { s: ident })
-            },
+            }
             TT_LPAREN => {
                 self.next();
                 let v = self.rexpr()?;
                 self.peek_check(TT_RPAREN)?;
                 v
-            },
+            }
             TT_LBRACE => {
                 let lambda = self.rlambda_block_del()?;
                 self.ast_anyty(AstData::Lambda { lambda })
-            },
+            }
             TT_LBRACKET => {
                 self.next();
                 let mut elems = Vec::new();
                 self.rrecord_body(&mut elems)?;
                 self.ast_anyty(AstData::Array { elems })
-            },
+            }
             _ => { return Err(ParseError(self.span(), "expected expression")) }
         };
 
@@ -788,8 +887,14 @@ impl Parser {
     pub fn rsimple_expr_tail(&mut self, mut r: Ast) -> ParseResult<Ast> {
         loop {
             if self.test(TT_DOT) {
+                let range = self.test(TT_DOT);
                 let member = self.rprimary_del()?;
-                r = self.ast_anyty(AstData::Field { base: Box::new(r), member: Box::new(member) });
+                if range {
+                    //r = self.ast_anyty(AstData::Range { from: Box::new(r), to: Box::new(member) });
+                    panic!("not yet supported: ..");
+                } else {
+                    r = self.ast_anyty(AstData::Field { base: Box::new(r), member: Box::new(member) });
+                }
                 self.next();
             }
 
@@ -862,6 +967,34 @@ impl Parser {
             self.next();
             
             Ok(self.ast_anyty(AstData::While { cond: Box::new(cond), body }))
+        } else if self.test(TT_FOR) {
+            //let mut locals = vec![];
+            //let pat = self.rpattern(&mut locals, AstType::Any)?;
+            let name = self.check_ident()?;
+            let local_index = self.new_local(
+                        name.clone(),
+                        AstType::Any);
+
+            self.check(TT_IN)?;
+
+            let from = self.rprimary_del()?;
+            self.next();
+            self.check(TT_DOT)?;
+            self.check(TT_DOT)?;
+            let to = self.rprimary_del()?;
+            self.next();
+            //r = self.ast_anyty(AstData::Range { from: Box::new(r), to: Box::new(member) });
+            //let iter = self.rexpr()?;
+            let body = self.rlambda_block_del()?;
+            self.next();
+            Ok(self.ast_anyty(AstData::For {
+                name: name,
+                pat: local_index,
+                iter: (Box::new(from), Box::new(to)),
+                body
+            }))
+        } else if self.test(TT_BREAK) {
+            Ok(self.ast_anyty(AstData::Break))
         } else if self.test(TT_LOOP) {
             let body = self.rlambda_block_del()?;
             self.next();
@@ -969,6 +1102,7 @@ impl Parser {
     pub fn ast_anyty(&self, data: AstData) -> Ast {
         Ast {
             loc: self.span(),
+            attr: Attr::None,
             ty: AstType::Any,
             data
         }
@@ -1022,6 +1156,12 @@ impl Parser {
                     }
                     "binary" => {
                         attr = Attr::Binary;
+                    }
+                    "inline" => {
+                        attr = Attr::Inline;
+                    }
+                    "debug" => {
+                        attr = Attr::Debug;
                     }
                     _ => panic!("unknown attribute")
                 }
@@ -1123,6 +1263,7 @@ impl Parser {
 
                     lambda.expr.push(Ast {
                         loc: self.span(),
+                        attr: Attr::None,
                         ty: AstType::None,
                         data: AstData::LetLocal {
                             name, ty, init, local_index, attr
@@ -1148,6 +1289,7 @@ impl Parser {
                 self.uses.push(Use(attr, path));
                 lambda.expr.push(Ast {
                     loc: self.span(),
+                    attr: Attr::None,
                     ty: AstType::None,
                     data: AstData::Use { name, rel_index }
                 });
@@ -1156,11 +1298,8 @@ impl Parser {
                     panic!("spurious 'pub'");
                 }
 
-                // TODO: Support attributes for other things
-                if attr != Attr::None {
-                    panic!("spurious attribute");
-                }
-                let expr = self.rexpr()?;
+                let mut expr = self.rexpr()?;
+                expr.attr = attr;
                 lambda.expr.push(expr);
             }
 

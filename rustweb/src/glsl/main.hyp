@@ -4,7 +4,7 @@ use vertex as vert
 
 @uniform pub let s: sampler2D
 
-#[
+#[=
 fn pie(p: vec2, angle: float): float {
     angle := radians(angle) / 2.0
     let n = vec2(cos(angle), sin(angle))
@@ -15,10 +15,75 @@ fn rotateCCW(p: vec2, a: float): vec2 {
     let m = mat2(cos(a), sin(a), -sin(a), cos(a))
     return p * m
 }
-]
+=]
+
+fn hash2(co: vec2): float {
+    return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453)
+}
+
+fn starplane(dir: vec3): float {
+    let screenscale: float = 1.0 / 700.0
+
+    var basePos: vec2 = dir.xy * (0.5 / screenscale) / max(0.001, abs(dir.z))
+    let largeStarSizePixels = 20.0
+    var color = 0.0
+
+    basePos := floor(basePos)
+    if hash2(basePos.xy * screenscale) > 0.997 {
+        let r: float = hash2(basePos.xy * 0.5)
+        let time = 0.0 # TODO
+        color += r * (0.3 * sin(time * 5.0 * (r * 5.0) + r) + 0.7) * 1.5
+    }
+
+    return color * abs(dir.z)
+}
+
+fn rotation(yaw: float, pitch: float): mat3 {
+    return mat3(cos(yaw), 0, -sin(yaw), 0, 1, 0, sin(yaw), 0, cos(yaw)) * mat3(1, 0, 0, 0, cos(pitch), sin(pitch), 0, -sin(pitch), cos(pitch))
+}
+
+fn starbox(dir: vec3): float {
+	return starplane(dir.xyz) + starplane(dir.yzx) + starplane(dir.zxy)
+}
+
+fn starfield(dir: vec3): float {
+    let pi = 3.1415927
+    let deg: float = pi / 180.0
+    return starbox(dir) + starbox(rotation(45.0 * deg, 45.0 * deg) * dir)
+}
+
+pub fn sky() {
+    let rd: vec3 = normalize(vert.fsPos.xyz)
+
+    let h: float = rd.y * -0.5 + 0.5
+    @inline let skycol: vec3 = vec3(starfield(rd)) +
+        mix(mix(vec3(0), vec3(0.2, 0.1, 0.43), h + 0.3),
+            vec3(0.08, 0.61, 0.83), h * 1.5 - 0.4)
+    gl_FragColor := vec4(skycol, 1)
+}
 
 pub fn main() {
     gl_FragColor := texture2D(s, vert.fsTexcoord)*vert.fsColor
     #gl_FragColor := vec4(vert.fsTexcoord.xy, 0, 1) #*vert.fsColor
     #gl_FragColor := vec4(1,1,1,1)
+}
+
+pub fn translucent() {
+    gl_FragColor := vec4(vert.fsColor.rgb, 0.5)
+}
+
+pub fn white() {
+    #gl_FragColor := texture2D(s, vert.fsTexcoord)*vert.fsColor
+    #gl_FragColor := vec4(vert.fsTexcoord.xy, 0, 1) #*vert.fsColor
+    let x = 1.0
+    @inline let one = 1
+    let y = 2.0
+    if x == 1.0 {
+        x := 3.0
+    } else {
+        x := 4.0
+        y := 5.0
+        return z
+    }
+    gl_FragColor := vec4(1,1,1, if one == 1 { one } else { one })
 }

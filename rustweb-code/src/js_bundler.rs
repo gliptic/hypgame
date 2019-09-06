@@ -1,11 +1,12 @@
 use crate::{JsAst, JsLit, JsOp, JsUnop, JsBuiltin, JsPattern};
 //use crate::glsl_bundler::{self, GlslBundler, GlslCollection};
-use crate::hyp_parser::{ModuleInfo, Ident, Language, AstLambda};
-use crate::{hyp_to_glsl, glsl_bundler};
-use std::collections::HashMap;
+use crate::hyp_parser::{self as hyp, ModuleInfo, Ident, Language, AstLambda};
+use crate::{hyp_to_js, hyp_to_glsl, glsl_bundler};
+use std::collections::{HashMap, HashSet};
+use crate::conflict_tree::ConflictTree;
 
 // TODO: Move JsBundler to own file
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Prec(u32, i32);
 
 impl Prec {
@@ -29,6 +30,7 @@ impl Prec {
 const PREC_DOT_BRACKET: Prec = Prec(1, -1);
 const PREC_NEW: Prec = Prec(1, 1);
 const PREC_CALL: Prec = Prec(2, -1);
+const PREC_SELECT: Prec = Prec(4, 1);
 const PREC_MUL_DIV_REM: Prec = Prec(5, -1);
 const PREC_PLUS_MINUS: Prec = Prec(6, -1);
 const PREC_SHIFT: Prec = Prec(7, -1);
@@ -85,7 +87,7 @@ pub struct JsBundler<'a> {
     pub buf: String,
     indent_len: u32,
     pub current_module: usize,
-    pub module_infos: &'a Vec<ModuleInfo>,
+    pub module_infos: &'a mut Vec<ModuleInfo>,
     pub module_lambdas: &'a Vec<AstLambda>,
     pub glsl_fn_map: HashMap<(u32, u32), usize>,
 
@@ -93,8 +95,11 @@ pub struct JsBundler<'a> {
     pub wasm_offsets: HashMap<String, u64>,
 }
 
+fn other(thing: &mut Vec<ModuleInfo>) {
+}
+
 impl<'a> JsBundler<'a> {
-    pub fn new<'b>(module_infos: &'b Vec<ModuleInfo>, module_lambdas: &'b Vec<AstLambda>) -> JsBundler<'b> {
+    pub fn new<'b>(module_infos: &'b mut Vec<ModuleInfo>, module_lambdas: &'b Vec<AstLambda>) -> JsBundler<'b> {
         JsBundler {
             buf: String::new(),
             indent_len: 0,
@@ -105,6 +110,168 @@ impl<'a> JsBundler<'a> {
             wasm_offsets: HashMap::new(),
             current_module: 0
         }
+    }
+
+    pub fn resolve_name_conflicts(&mut self) {
+        
+        fn clone_and_annotate(ct: &ConflictTree<u32>, abs_index: u32) -> ConflictTree<(u32, u32)> {
+            let mut new_ct = ConflictTree::new();
+            new_ct.items = ct.items.iter().map(|&(id, count)| ((abs_index, id), count)).collect();
+            new_ct.children = ct.children.iter()
+                .map(|ch| clone_and_annotate(ch, abs_index)).collect();
+            new_ct
+        }
+
+        fn rename(
+            module_infos: &mut [hyp::ModuleInfo],
+            node: &ConflictTree<(u32, u32)>,
+            seen: &mut HashSet<String>) {
+
+            for &((abs_index, local_index), _) in &node.items {
+                let local_name = &mut module_infos[abs_index as usize].locals[local_index as usize].1;
+                //seen.insert(local_name.clone());
+
+                if seen.contains(local_name) {
+                    for i in 0.. {
+                        let new_name = format!("{}${}", local_name, i);
+                        if !seen.contains(&new_name) {
+                            *local_name = new_name.clone();
+                            seen.insert(new_name);
+                            break;
+                        }
+                    }
+                } else {
+                    seen.insert(local_name.clone());
+                }
+            }
+
+            for ch in &node.children {
+                rename(module_infos, ch, seen);
+            }
+
+            for &((abs_index, local_index), _) in &node.items {
+                let local_name = &module_infos[abs_index as usize].locals[local_index as usize].1;
+                seen.remove(local_name);
+            }
+        }
+
+        let mut seen = HashSet::new();
+        let mut bundled_ct = ConflictTree::new();
+
+        for (abs_index, m) in self.module_infos.iter_mut().enumerate() {
+            if m.language == hyp::Language::Js {
+                bundled_ct.append(clone_and_annotate(&m.conflict_tree, abs_index as u32));
+            }
+        }
+
+        rename(&mut self.module_infos, &bundled_ct, &mut seen);
+    }
+
+    pub fn write_glsl(&mut self, glsl: HashMap<usize, glsl_bundler::BundledModule>) {
+        
+        for (abs_index, mut bundled_module) in glsl {
+            let module = &self.module_infos[abs_index];
+
+            self.buf.push_str("var ");
+            self.buf.push_str(&module.name);
+            self.buf.push_str(" = ");
+
+            if bundled_module.exported_functions.len() != 1 {
+                self.buf.push_str("[");
+
+                // Figure out common prefix because it's a free win
+
+                'shift_loop: loop {
+                    let mut it = bundled_module.exported_functions.iter_mut();
+                    let first_char;
+                    if let Some((first_src, _)) = it.next() {
+                        if let Some(ch) = first_src.chars().next() {
+                            first_char = ch;
+                        } else {
+                            break 'shift_loop;
+                        }
+                    } else {
+                        break 'shift_loop;
+                    }
+
+                    while let Some((func_src, _)) = it.next() {
+                        if let Some(ch) = func_src.chars().next() {
+                            if ch != first_char {
+                                break 'shift_loop;
+                            }
+                        } else {
+                            break 'shift_loop;
+                        }
+                    }
+
+                    // All sources have the same first char, remove it and put it last in prefix
+                    for (func_src, _) in bundled_module.exported_functions.iter_mut() {
+                        func_src.remove(0);
+                    }
+                    bundled_module.prefix.push(first_char);
+                }
+
+                for (i, (func_src, exported_index)) in bundled_module.exported_functions.into_iter().enumerate() {
+                    if i > 0 {
+                        self.buf.push_str(",");
+                    }
+                    self.str_lit(&func_src);
+                    self.glsl_fn_map.insert((abs_index as u32, exported_index), i);
+                }
+
+                self.buf.push_str("].map(function (a) { return ");
+                self.str_lit(&bundled_module.prefix);
+                self.buf.push_str(" + a; });\n");
+            } else {
+                let (func_src, exported_index) = bundled_module.exported_functions.remove(0);
+                self.glsl_fn_map.insert((abs_index as u32, exported_index), std::usize::MAX);
+                self.str_lit(&(bundled_module.prefix + &func_src));
+                self.buf.push_str(";\n");
+            }
+        }
+    }
+
+    pub fn run(&mut self, debug: bool) {
+
+        self.resolve_name_conflicts();
+        let module_order = self.find_module_ordering();
+
+        self.write_iife_begin_plain();
+
+        let glsl = glsl_bundler::GlslBundler::bundle(&mut self.module_infos, &self.module_lambdas, &module_order, debug);
+        self.write_glsl(glsl);
+
+        // TODO: Combine together e.g. binaries and process as a unit
+
+        for order_index in 0..module_order.len() {
+            let module_index = module_order[order_index];
+
+            println!("bundling #{}: {}", module_index, &self.module_infos[module_index as usize].name);
+
+            let lang = self.module_infos[module_index as usize].language;
+
+            if lang == hyp::Language::Js {
+                let mut enc = hyp_to_js::JsEnc::new();
+                enc.parse_hyp(&self.module_lambdas[module_index as usize].expr);
+                if enc.errors.len() > 0 {
+                    for err in &enc.errors {
+                        let mi = &self.module_infos[module_index as usize];
+                        // TODO!!
+                        mi.print_line_at(err);
+                    }
+                    panic!("errors in hyp to js conversion");
+                    // TODO!!
+                    //return Err(());
+                }
+                self.current_module = module_index as usize;
+                self.stmts_inner_to_js(&enc.module.items, PREC_MAX, false);
+            } else if lang == hyp::Language::Binary {
+                self.current_module = module_index as usize;
+                self.binary_to_js();
+            }
+        }
+
+        self.write_iife_end();
     }
 
     pub fn wrap_p(&mut self, slot: Prec, op: Prec) -> bool {
@@ -197,25 +364,47 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
         self.buf.push_str("})(this)");
     }
 
-    pub fn stmts_inner_to_js(&mut self, stmts: &[JsAst]) {
+    pub fn stmts_inner_to_js(&mut self, stmts: &[JsAst], slot: Prec, commas: bool) {
+        let mut first = true;
+        let prec = if stmts.len() == 1 { slot } else { PREC_COMMA };
+
         for s in stmts {
-            self.indent();
-            let need_semi = self.to_js(s, PREC_MAX);
-            if need_semi == NeedSemi::Yes {
-                self.buf.push_str(";\n");
-            } else {
+            if first {
+                first = false;
+            } else if commas {
+                self.buf.push_str(", ");
+            }
+
+            if !commas {
+                self.indent();
+            }
+
+            let need_semi = self.to_js(s, prec);
+            if !commas {
+                if need_semi == NeedSemi::Yes {
+                    self.buf.push_str(";");
+                }
                 self.buf.push_str("\n");
             }
         }
     }
 
-    pub fn stmts_to_js(&mut self, stmts: &[JsAst]) {
-        self.buf.push_str("{\n");
-        self.indent_len += 1;
-        self.stmts_inner_to_js(stmts);
-        self.indent_len -= 1;
-        self.indent();
-        self.buf.push_str("}");
+    pub fn stmts_to_js(&mut self, stmts: &[JsAst], can_skip_braces: bool, slot: Prec) -> NeedSemi {
+        if can_skip_braces && stmts.len() > 0
+         && stmts.iter().all(|x| x.is_expr()) {
+            let p = stmts.len() != 1 && self.wrap_p(slot, PREC_COMMA);
+            self.stmts_inner_to_js(stmts, slot, true);
+            self.unwrap_p(p);
+            NeedSemi::Yes
+        } else {
+            self.buf.push_str("{\n");
+            self.indent_len += 1;
+            self.stmts_inner_to_js(stmts, PREC_MAX, false);
+            self.indent_len -= 1;
+            self.indent();
+            self.buf.push_str("}");
+            NeedSemi::No
+        }
     }
 
     pub fn str_lit(&mut self, s: &str) {
@@ -349,10 +538,44 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 NeedSemi::Yes
             },
             JsAst::Block { stmts } => {
-                self.stmts_to_js(stmts);
-                NeedSemi::No
-            },
-            JsAst::Use { name: _name, rel_index } => {
+                //self.stmts_to_js(stmts);
+                //NeedSemi::No
+                self.stmts_to_js(stmts, slot != PREC_MAX, slot)
+            }
+            JsAst::NewObject { assignments } => {
+                self.buf.push('{');
+                let mut first = true;
+                for (name, value) in assignments {
+                    if first {
+                        first = false;
+                    } else {
+                        self.buf.push_str(", ");
+                    }
+                    self.buf.push_str(name);
+                    self.buf.push_str(": ");
+                    self.to_js(value, PREC_COMMA.on_either());
+                }
+                self.buf.push('}');
+                NeedSemi::Yes
+            }
+            JsAst::NewCtor { ctor, params } => {
+                self.buf.push_str("new ");
+                self.to_js(ctor, PREC_NEW.on_left());
+                self.buf.push('(');
+                let mut first = true;
+                for value in params {
+                    if first {
+                        first = false;
+                    } else {
+                        self.buf.push_str(", ");
+                    }
+                    self.to_js(value, PREC_COMMA.on_either());
+                }
+                self.buf.push(')');
+                NeedSemi::Yes
+            }
+            JsAst::Use { name: _name, rel_index: _rel_index } => {
+                /*
                 let abs_index = self.module_infos[self.current_module].import_map[*rel_index as usize];
                 let module = &self.module_infos[abs_index as usize];
                 let module_lambda = &self.module_lambdas[abs_index as usize];
@@ -366,8 +589,6 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     self.buf.push_str(&module.name);
                     self.buf.push_str(" = ");
 
-                    let mut array_index = 0;
-
                     let main = {
                             let mut glsl_bundler = glsl_bundler::GlslBundler::new(self.module_infos, -1);
                             glsl_bundler.current_module = abs_index as usize;
@@ -377,6 +598,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
 
                     let mut exported_functions = Vec::new();
 
+                    //let mut array_index = 0;
                     for &exported_index in &module.exports {
                         if module.locals[exported_index as usize].0.is_fn() {
                             let mut glsl_bundler = glsl_bundler::GlslBundler::new(self.module_infos, exported_index as i32);
@@ -385,7 +607,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                             
                             exported_functions.push((glsl_bundler.buf.buf, exported_index));
                             
-                            array_index += 1;
+                            //array_index += 1;
                         }
                     }
 
@@ -397,7 +619,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                                 self.buf.push_str(",");
                             }
                             self.str_lit(&f);
-                            self.glsl_fn_map.insert((abs_index, exported_index), array_index);
+                            self.glsl_fn_map.insert((abs_index, exported_index), i);
                         }
 
                         self.buf.push_str("].map(function (a) { return ");
@@ -410,6 +632,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                         self.buf.push_str(";");
                     }
                 }
+                */
                 NeedSemi::No
             },
             &JsAst::Global { index, constant, ref value } => {
@@ -466,35 +689,67 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 NeedSemi::Yes
             },
             JsAst::If { cond, then_branch, else_branch } => {
-                // TODO: Use ?: when needed
-                self.buf.push_str("if (");
-                self.to_js(cond, PREC_MAX);
-                self.buf.push_str(") ");
-                self.stmts_to_js(then_branch);
-                match else_branch {
-                    Some(e) => {
-                        self.buf.push_str(" else ");
-                        self.to_js(e, PREC_MAX);
-                    },
-                    None => {}
+                if ast.is_expr() {
+                    let p = self.wrap_p(slot, PREC_SELECT);
+                    self.to_js(cond, PREC_MAX);
+                    self.buf.push_str(" ? ");
+                    // TODO: Avoid clone etc.
+                    self.to_js(&JsAst::Block { stmts: (*then_branch).clone() }, PREC_SELECT);
+                    self.buf.push_str(" : ");
+                    if let Some(else_ast) = else_branch {
+                        self.to_js(else_ast, PREC_SELECT);
+                    } else {
+                        // TODO: Use some other literal based on what the type on the other side is
+                        self.buf.push_str("0");
+                    }
+                    self.unwrap_p(p);
+                    NeedSemi::Yes
+                } else {
+                    self.buf.push_str("if (");
+                    self.to_js(cond, PREC_MAX);
+                    self.buf.push_str(") ");
+                    let mut need_semi = self.stmts_to_js(then_branch, true, PREC_MAX);
+                    match else_branch {
+                        Some(e) => {
+                            if need_semi == NeedSemi::Yes {
+                                self.buf.push_str(";\n");
+                            }
+                            self.buf.push_str(" else ");
+                            need_semi = self.to_js(e, PREC_MAX);
+                        },
+                        None => {}
+                    }
+                    need_semi
                 }
-                NeedSemi::No
             },
+            JsAst::Break => {
+                self.buf.push_str("break");
+                NeedSemi::Yes
+            }
             JsAst::While { cond, body } => {
                 self.buf.push_str("for (;");
                 self.to_js(cond, PREC_MAX);
                 self.buf.push_str(";) ");
-                self.stmts_to_js(body);
-                NeedSemi::No
-            },
+                self.stmts_to_js(body, true, PREC_MAX)
+            }
+            JsAst::For { pre, cond, post, body } => {
+                self.buf.push_str("for (");
+                if self.to_js(pre, PREC_MAX) == NeedSemi::Yes {
+                    self.buf.push_str(";");
+                }
+                self.to_js(cond, PREC_MAX);
+                self.buf.push_str(";");
+                self.to_js(post, PREC_MAX);
+                self.buf.push_str(") ");
+                self.stmts_to_js(body, true, PREC_MAX)
+            }
             JsAst::Loop { body } => {
                 self.buf.push_str("for (;;) ");
-                self.stmts_to_js(body);
-                NeedSemi::No
+                self.stmts_to_js(body, true, PREC_MAX)
             },
             JsAst::Unary { value, op } => {
                 let prec = match op {
-                    JsUnop::Not | JsUnop::Plus | JsUnop::Minus => PREC_UNARY_PLUS_MINUS,
+                    JsUnop::Not | JsUnop::Plus | JsUnop::Minus | JsUnop::BitNot => PREC_UNARY_PLUS_MINUS,
                     JsUnop::PreInc | JsUnop::PreDec => PREC_PRE_INC_DEC,
                 };
 
@@ -502,6 +757,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 self.buf.push_str(match op {
                     JsUnop::Plus => "+",
                     JsUnop::Minus => "-",
+                    JsUnop::BitNot => "~",
                     JsUnop::Not => "!",
                     JsUnop::PreInc => "++",
                     JsUnop::PreDec => "--",

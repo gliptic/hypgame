@@ -1,7 +1,9 @@
 * Render cells and use gl.enable(gl.CULL_FACE);
-* Why to use WebGL2:
+* Why use WebGL2:
     uniform buffer object? could be less code? at least for wasm/typed array work
     no need to getExtension for standard derivatives
     in/out in shaders
 * Remember to test controls with normal keyboard layout
+* Record walls to render instead of squares? Unless it is an object
 * Draw sound data directly onto the framebuffer and readPixels it out at startup
+* Pass skypos.xy as texcoords, z from pos.z
