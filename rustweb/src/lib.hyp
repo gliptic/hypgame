@@ -4,6 +4,8 @@ use render
 @binary use "data.txt" as data
 #@binary use "tom-thumb-new.png" as thumb
 
+use synth
+
 type Foo = {
     x: u32,
     y: u32

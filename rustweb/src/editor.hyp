@@ -4,39 +4,58 @@ use render
 pub var draw
 pub var paused
 
+fn get_wall_name(wall) {
+    if wall == state.WALL_FLOOR {
+        return "FLOOR"
+    } else if state.is_block(wall) {
+        let id = (wall - state.WALL_BLOCK0)
+        return "BLOCK " + id
+    } else if state.is_teleport(wall) {
+        let id = (wall - state.WALL_TELEPORT0)
+        return "TELEPORT " + (id >> 1) + if id & 1 { " REV" } else { "" }
+    } else if state.is_switch(wall) {
+        let id = (wall - state.WALL_SWITCH0)
+        return "SWITCH " + id
+    } else if state.is_door(wall) {
+        let id = (wall - state.WALL_DOOR0)
+        return "DOOR " + id
+    } else if wall == state.WALL_WINDOW {
+        return "WINDOW"
+    }
+    return "" + wall
+}
+
 fn get_cell_name(cell) {
     if cell == state.CELL_FLOOR {
         return "FLOOR"
-    } else if cell == state.CELL_BLOCK {
-        return "BLOCK"
-    } else if state.is_teleport(cell) {
-        let id = (cell - state.CELL_TELEPORT0)
-        return "TELEPORT " + (id >> 1) + if id & 1 { " REV" } else { "" }
-    } else if state.is_switch(cell) {
-        let id = (cell - state.CELL_SWITCH0)
-        return "SWITCH " + id
-    } else if state.is_door(cell) {
-        let id = (cell - state.CELL_DOOR0)
-        return "DOOR " + id
-    } else if cell == state.CELL_WINDOW {
-        return "WINDOW"
+    } else if state.is_key(cell) {
+        let id = (cell - state.CELL_KEY0)
+        return "KEY " + id
+    } else if cell == state.CELL_EXIT {
+        return "EXIT"
+    } else if cell == state.CELL_CLOAK {
+        return "CLOAK"
     }
     return "" + cell
 }
 
 pub fn start(world) {
     let cursor = [0, 0]
-    var cursor_dir = true, menu = false
+    var cursor_dir = true, cursor_type = 1, menu = false
     paused := false
 
-    var editor_selected_cell = state.CELL_BLOCK,
-        last_selected_teleport = state.CELL_TELEPORT0,
-        last_selected_switch = state.CELL_SWITCH0,
-        last_selected_door = state.CELL_DOOR0
+    var editor_selected_wall = state.WALL_BLOCK0,
+        last_selected_teleport = state.WALL_TELEPORT0,
+        last_selected_switch = state.WALL_SWITCH0,
+        last_selected_door = state.WALL_DOOR0,
+        last_selected_block = state.WALL_BLOCK0
+
+    var editor_selected_cell = state.CELL_FLOOR,
+        last_selected_key = state.CELL_KEY0
 
     fn to_json(st) {
         return JSON.stringify(new {
-            version: 1,
+            version: 2,
             map: world.first_state.map,
             options: world.first_state.options,
         })
@@ -52,8 +71,31 @@ pub fn start(world) {
         let map = JSON.parse(json)
         if map && map.map && map.options {
             # TODO: Upgrade map to latest version
-            st.map := map.map
-            st.options := map.options
+            var options = map.options
+            if map.version < 2 {
+                let ADDED_6_BLOCKS = 6, VERSION1_BLOCK_MAX = 4
+
+                for i in 0..state.MAP_SIZE {
+                    if map.map[i] >= VERSION1_BLOCK_MAX {
+                        map.map[i] += ADDED_6_BLOCKS
+                    }
+                }
+
+                options := new {}
+                Object.keys(map.options).forEach({|k|
+                    var new_k = +k
+                    if k >= VERSION1_BLOCK_MAX {
+                        new_k += ADDED_6_BLOCKS
+                    }
+                    options[new_k] := map.options[k]
+                })
+            }
+            #st.map := new Uint8Array(map.map)
+            st.map := new Uint8Array(map.map)
+            st.options := options
+
+            console.log(options)
+            console.log(map.map)
         }
     }
     
@@ -64,7 +106,7 @@ pub fn start(world) {
         }
     }
 
-    load_map()
+    #load_map()
     state.world_reset(world)
 
     fn save_map() {
@@ -113,8 +155,17 @@ pub fn start(world) {
     }
 
     fn load_map_from_disk(text) {
-        from_json(text, world.first_state)
-        reset_world()
+        if text.includes("songData") {
+            # Must be music, not a map
+
+            # To parse, we do this shitty thing:
+            var song = (new Function(text + "; return song"))()
+            
+            
+        } else {
+            from_json(text, world.first_state)
+            reset_world()
+        }
     }
     
     let drop_div = document.getElementById("d")
@@ -187,61 +238,108 @@ pub fn start(world) {
             if ev.keyCode == 88 {
                 cursor_dir := !cursor_dir
             }
+            if ev.keyCode == 90 {
+                cursor_type := 1 - cursor_type
+            }
             if ev.keyCode == 32 {
-                let cur_cell = state.get_wall(world.first_state.map, cursor, cursor_dir)
-                let draw_cell = if cur_cell == editor_selected_cell {
-                    state.CELL_FLOOR
-                } else {
-                    editor_selected_cell
-                }
+                if cursor_type == 0 {
+                    let cur_wall = state.get_wall(world.first_state.map, cursor, cursor_dir)
+                    let draw_wall = if cur_wall == editor_selected_wall {
+                        state.WALL_FLOOR
+                    } else {
+                        editor_selected_wall
+                    }
 
-                state.set_wall(
-                    world.first_state.map,
-                    cursor,
-                    cursor_dir,
-                    draw_cell)
+                    state.set_wall(
+                        world.first_state.map,
+                        cursor,
+                        cursor_dir,
+                        draw_wall)
+                } else {
+                    let cur_cell = state.get_cell(world.first_state.map, cursor)
+                    let draw_cell = if cur_cell == editor_selected_cell {
+                        state.CELL_FLOOR
+                    } else {
+                        editor_selected_cell
+                    }
+
+                    state.set_cell(
+                        world.first_state.map,
+                        cursor,
+                        draw_cell)
+                }
             }
             if ev.keyCode >= 48 && ev.keyCode <= 58 {
                 let num = ev.keyCode - 48
-                if num == 1 {
-                    editor_selected_cell := state.CELL_FLOOR
-                } else if num == 2 {
-                    editor_selected_cell := state.CELL_BLOCK
-                } else if num == 3 {
-                    if state.is_teleport(editor_selected_cell) {
-                        if state.is_teleport(editor_selected_cell + 1) {
-                            editor_selected_cell += 1
+                if cursor_type == 0 {
+                    if num == 1 {
+                        editor_selected_wall := state.WALL_FLOOR
+                    } else if num == 2 {
+                        if state.is_block(editor_selected_wall) {
+                            if state.is_block(editor_selected_wall + 1) {
+                                editor_selected_wall += 1
+                            } else {
+                                editor_selected_wall := state.WALL_BLOCK0
+                            }
                         } else {
-                            editor_selected_cell := state.CELL_TELEPORT0
+                            editor_selected_wall := last_selected_block
                         }
-                    } else {
-                        editor_selected_cell := last_selected_teleport
-                    }
-                    last_selected_teleport := editor_selected_cell
-                } else if num == 4 {
-                    if state.is_switch(editor_selected_cell) {
-                        if state.is_switch(editor_selected_cell + 1) {
-                            editor_selected_cell += 1
+                        last_selected_block := editor_selected_wall
+                    } else if num == 3 {
+                        if state.is_teleport(editor_selected_wall) {
+                            if state.is_teleport(editor_selected_wall + 1) {
+                                editor_selected_wall += 1
+                            } else {
+                                editor_selected_wall := state.WALL_TELEPORT0
+                            }
                         } else {
-                            editor_selected_cell := state.CELL_SWITCH0
+                            editor_selected_wall := last_selected_teleport
                         }
-                    } else {
-                        editor_selected_cell := last_selected_switch
-                    }
-                    last_selected_switch := editor_selected_cell
-                } else if num == 5 {
-                    if state.is_door(editor_selected_cell) {
-                        if state.is_door(editor_selected_cell + 1) {
-                            editor_selected_cell += 1
+                        last_selected_teleport := editor_selected_wall
+                    } else if num == 4 {
+                        if state.is_switch(editor_selected_wall) {
+                            if state.is_switch(editor_selected_wall + 1) {
+                                editor_selected_wall += 1
+                            } else {
+                                editor_selected_wall := state.WALL_SWITCH0
+                            }
                         } else {
-                            editor_selected_cell := state.CELL_DOOR0
+                            editor_selected_wall := last_selected_switch
                         }
-                    } else {
-                        editor_selected_cell := last_selected_door
+                        last_selected_switch := editor_selected_wall
+                    } else if num == 5 {
+                        if state.is_door(editor_selected_wall) {
+                            if state.is_door(editor_selected_wall + 1) {
+                                editor_selected_wall += 1
+                            } else {
+                                editor_selected_wall := state.WALL_DOOR0
+                            }
+                        } else {
+                            editor_selected_wall := last_selected_door
+                        }
+                        last_selected_door := editor_selected_wall
+                    } else if num == 6 {
+                        editor_selected_wall := state.WALL_WINDOW
                     }
-                    last_selected_door := editor_selected_cell
-                } else if num == 6 {
-                    editor_selected_cell := state.CELL_WINDOW
+                } else {
+                    if num == 1 {
+                        editor_selected_cell := state.CELL_FLOOR
+                    } else if num == 2 {
+                        if state.is_block(editor_selected_cell) {
+                            if state.is_block(editor_selected_cell + 1) {
+                                editor_selected_cell += 1
+                            } else {
+                                editor_selected_cell := state.CELL_KEY0
+                            }
+                        } else {
+                            editor_selected_cell := last_selected_key
+                        }
+                        last_selected_key := editor_selected_cell
+                    } else if num == 3 {
+                        editor_selected_cell := state.CELL_EXIT
+                    } else if num == 4 {
+                        editor_selected_cell := state.CELL_CLOAK
+                    }
                 }
             }
             if ev.keyCode == 9 {
@@ -277,6 +375,14 @@ pub fn start(world) {
                 -y - down, 0, 0, 1, 1);
         }
 
+        let drawCell = { |x, y|
+            render.wall3d(whiteTex,
+                scale_down, 10 + x + 0,
+                scale_down, 10 + x + 1,
+                -y - 0,
+                -y - 1, 0, 0, 1, 1);
+        }
+
         let drawWallText = { |x, y, dir, text, mirror|
             let down = if !dir { 1 } else { 0 }
             let up = if !dir { 0 } else { 0 }
@@ -298,6 +404,22 @@ pub fn start(world) {
             render.drawText(fontBits, whiteTex, text, midx, midy, 100, stridex, 0, 1, 0.4/3)
         }
 
+        let drawCellText = { |x, y, text, mirror|
+            let textScale = 0.4/3
+            
+            let stridex = if mirror { -1 } else { 1 }
+            var midx = 10 + x + 1 / 2
+            var midy = -y - 1 / 2 - textScale*5/2
+
+            if mirror {
+                midx += textScale*3/2
+            } else {
+                midx -= textScale*3/2
+            }
+
+            render.drawText(fontBits, whiteTex, text, midx, midy, 100, stridex, 0, 1, 0.4/3)
+        }
+
         # Editor bg
         render.color(0x7f000000)
         render.wall3d(whiteTex,
@@ -306,8 +428,15 @@ pub fn start(world) {
             -0,
             -0 - state.H, 0, 0, 1, 1);
 
-        render.color(0xff00ff00)
-        drawWall(cursor[0], cursor[1], cursor_dir, 0.1)
+        # Cursor
+        if cursor_type == 0 {
+            render.color(0xff00ff00)
+            drawWall(cursor[0], cursor[1], cursor_dir, 0.1)
+        } else {
+            render.color(0xaa00ff00)
+            drawCell(cursor[0], cursor[1])
+        }
+
         let now = state.current_player_time(world)
 
         for my in 0..32 {
@@ -317,7 +446,7 @@ pub fn start(world) {
                 let st = world.first_state
                 let down = state.get_wall(st.map, [mx, my], false)
                 let right = state.get_wall(st.map, [mx, my], true)
-
+                let cell = state.get_cell(st.map, [mx, my])
                 let width = 0.05
                 #[=
                 render.wall3d(whiteTex,
@@ -342,21 +471,47 @@ pub fn start(world) {
                         -my - 0,
                         -my - 1, 0, 0, 1, 1);
                 }
-                
-                [[down, false], [right, true]].forEach({|[cell, dir]|
-                    if cell == state.CELL_BLOCK {
-                        render.color(0xffffffff)
-                        drawWall(mx, my, dir, width)
-                    } else if state.is_teleport(cell) {
-                        let teleport_id = (cell - state.CELL_TELEPORT0) >> 1
+
+                if state.is_key(cell) {
+                    let id = cell - state.CELL_KEY0
+                    render.color(0x3fffffff)
+                    drawCell(mx, my)
+                    render.color(0xff00ffff)
+                    drawCellText(mx, my, ""+id, false)
+                } else if cell == state.CELL_EXIT {
+                    render.color(0x3fffffff)
+                    drawCell(mx, my)
+                    render.color(0xffffff00)
+                    drawCellText(mx, my, "E", false)
+                } else if cell == state.CELL_CLOAK {
+                    render.color(0x3fffffff)
+                    drawCell(mx, my)
+                    render.color(0xffaaaaaa)
+                    drawCellText(mx, my, "C", false)
+                }
+
+                [[down, false], [right, true]].forEach({|[wall, dir]|
+                    if state.is_block(wall) {
+                        
+                        if wall > state.WALL_BLOCK0 {
+                            render.color(0xffaaaaaa)
+                            drawWall(mx, my, dir, width)
+                            render.color(0xffffffff)
+                            drawWallText(mx, my, dir, ""+(wall - state.WALL_BLOCK0), false)
+                        } else {
+                            render.color(0xffffffff)
+                            drawWall(mx, my, dir, width)
+                        }
+                    } else if state.is_teleport(wall) {
+                        let teleport_id = (wall - state.WALL_TELEPORT0) >> 1
                         render.color(0xffffaaaa)
-                        drawWallText(mx, my, dir, ""+teleport_id, cell & 1)
-                    } else if state.is_switch(cell) {
-                        let switch_id = cell - state.CELL_SWITCH0
+                        drawWallText(mx, my, dir, ""+teleport_id, wall & 1)
+                    } else if state.is_switch(wall) {
+                        let switch_id = wall - state.WALL_SWITCH0
                         render.color(0xffffffaa)
                         drawWallText(mx, my, dir, ""+switch_id, false)
-                    } else if state.is_door(cell) {
-                        let door_id = cell - state.CELL_DOOR0
+                    } else if state.is_door(wall) {
+                        let door_id = wall - state.WALL_DOOR0
                         render.color(0xffffaaff)
                         drawWallText(mx, my, dir, ""+door_id, false)
                     }
@@ -376,7 +531,7 @@ pub fn start(world) {
             -player_pos[1] + player_width, 0, 0, 1, 1);
 
         Object.keys(world.frames[now].player_states).forEach({|k|
-            if k != world.current_player {
+            if +k != world.current_player {
                 let st = world.frames[now].player_states[k]
                 render.color(0xffaaaaff)
                 let other_player_pos = st.pos
@@ -388,10 +543,14 @@ pub fn start(world) {
             }
         })
 
-        render.color(0xff000000)
+        render.color(0xffffffff)
 
-        render.drawText(fontBits, whiteTex, get_cell_name(editor_selected_cell), 10, 0, 100, 1, 0, 1, 1/3)
-        render.drawText(fontBits, whiteTex, cursor[0] + " " + cursor[1], 20, 0, 100, 1, 0, 1, 1/3)
+        if cursor_type == 0 {
+            render.drawText(fontBits, whiteTex, get_wall_name(editor_selected_wall), 10, 0, 100, 1, 0, 1, 1/3)
+        } else {
+            render.drawText(fontBits, whiteTex, get_cell_name(editor_selected_cell), 10, 0, 100, 1, 0, 1, 1/3)
+        }
+        render.drawText(fontBits, whiteTex, cursor[0] + " " + cursor[1], 30, 0, 100, 1, 0, 1, 1/3)
 
         if menu {
             render.drawText(fontBits, whiteTex, "N  SAVE", 10, 5, 100, 1, 0, 1, 1/3)

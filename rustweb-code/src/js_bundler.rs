@@ -380,7 +380,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 self.indent();
             }
 
-            let need_semi = self.to_js(s, prec);
+            let need_semi = self.to_js(s, prec, commas);
             if !commas {
                 if need_semi == NeedSemi::Yes {
                     self.buf.push_str(";");
@@ -478,7 +478,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
         self.buf.push_str("\";");
     }
 
-    pub fn to_js(&mut self, ast: &JsAst, slot: Prec) -> NeedSemi {
+    pub fn to_js(&mut self, ast: &JsAst, slot: Prec, must_be_expr: bool) -> NeedSemi {
         match ast {
             JsAst::Fn { index, expr, args, .. } => {
                 self.buf.push_str("function ");
@@ -497,7 +497,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     self.pattern_to_js(i);
                 }
                 self.buf.push_str(") ");
-                self.to_js(&expr, PREC_MAX);
+                self.to_js(&expr, PREC_MAX, false);
                 self.buf.push_str("\n");
                 NeedSemi::No
             },
@@ -529,7 +529,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 
             }
             JsAst::Call { func, args } => {
-                self.to_js(&func, PREC_CALL);
+                self.to_js(&func, PREC_CALL, true);
                 self.buf.push('(');
                 let mut first = true;
                 for arg in args {
@@ -538,7 +538,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     } else {
                         self.buf.push_str(", ");
                     }
-                    self.to_js(arg, PREC_COMMA.on_either());
+                    self.to_js(arg, PREC_COMMA.on_either(), true);
                 }
                 self.buf.push(')');
                 NeedSemi::Yes
@@ -577,14 +577,14 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     }
                     self.buf.push_str(name);
                     self.buf.push_str(": ");
-                    self.to_js(value, PREC_COMMA.on_either());
+                    self.to_js(value, PREC_COMMA.on_either(), true);
                 }
                 self.buf.push('}');
                 NeedSemi::Yes
             }
             JsAst::NewCtor { ctor, params } => {
                 self.buf.push_str("new ");
-                self.to_js(ctor, PREC_NEW.on_left());
+                self.to_js(ctor, PREC_NEW.on_left(), true);
                 self.buf.push('(');
                 let mut first = true;
                 for value in params {
@@ -593,7 +593,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     } else {
                         self.buf.push_str(", ");
                     }
-                    self.to_js(value, PREC_COMMA.on_either());
+                    self.to_js(value, PREC_COMMA.on_either(), true);
                 }
                 self.buf.push(')');
                 NeedSemi::Yes
@@ -665,7 +665,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 self.buf.push_str(if constant { "const " } else { "var " });
                 self.buf.push_str(&name);
                 self.buf.push_str(" = ");
-                self.to_js(value, PREC_ASSIGN.on_right());
+                self.to_js(value, PREC_ASSIGN.on_right(), true);
                 self.buf.push_str(";");
                 NeedSemi::No
             },
@@ -684,7 +684,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     self.buf.push_str(name);
                     if i < values.len() {
                         self.buf.push_str(" = ");
-                        self.to_js(&values[i], PREC_ASSIGN.on_right());
+                        self.to_js(&values[i], PREC_ASSIGN.on_right(), true);
                     }
                 }
                 self.buf.push_str(";");
@@ -692,9 +692,9 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
             },
             JsAst::Assign { left, right } => {
                 let p = self.wrap_p(slot, PREC_ASSIGN);
-                self.to_js(left, PREC_ASSIGN.on_left());
+                self.to_js(left, PREC_ASSIGN.on_left(), true);
                 self.buf.push_str(" = ");
-                self.to_js(right, PREC_ASSIGN.on_right());
+                self.to_js(right, PREC_ASSIGN.on_right(), true);
                 self.unwrap_p(p);
                 NeedSemi::Yes
             },
@@ -707,21 +707,21 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     } else {
                         self.buf.push_str(", ");
                     }
-                    self.to_js(e, PREC_COMMA.on_either());
+                    self.to_js(e, PREC_COMMA.on_either(), true);
                 }
                 self.buf.push(']');
                 NeedSemi::Yes
             },
             JsAst::If { cond, then_branch, else_branch } => {
-                if ast.is_expr() {
+                if must_be_expr && ast.is_expr() {
                     let p = self.wrap_p(slot, PREC_SELECT);
-                    self.to_js(cond, PREC_MAX);
+                    self.to_js(cond, PREC_MAX, true);
                     self.buf.push_str(" ? ");
                     // TODO: Avoid clone etc.
-                    self.to_js(&JsAst::Block { stmts: (*then_branch).clone() }, PREC_SELECT);
+                    self.to_js(&JsAst::Block { stmts: (*then_branch).clone() }, PREC_SELECT, true);
                     self.buf.push_str(" : ");
                     if let Some(else_ast) = else_branch {
-                        self.to_js(else_ast, PREC_SELECT);
+                        self.to_js(else_ast, PREC_SELECT, true);
                     } else {
                         // TODO: Use some other literal based on what the type on the other side is
                         self.buf.push_str("0");
@@ -730,7 +730,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     NeedSemi::Yes
                 } else {
                     self.buf.push_str("if (");
-                    self.to_js(cond, PREC_MAX);
+                    self.to_js(cond, PREC_MAX, true);
                     self.buf.push_str(") ");
                     let mut need_semi = self.stmts_to_js(then_branch, true, PREC_MAX);
                     match else_branch {
@@ -739,7 +739,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                                 self.buf.push_str(";\n");
                             }
                             self.buf.push_str(" else ");
-                            need_semi = self.to_js(e, PREC_MAX);
+                            need_semi = self.to_js(e, PREC_MAX, false);
                         },
                         None => {}
                     }
@@ -752,18 +752,18 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
             }
             JsAst::While { cond, body } => {
                 self.buf.push_str("for (;");
-                self.to_js(cond, PREC_MAX);
+                self.to_js(cond, PREC_MAX, false);
                 self.buf.push_str(";) ");
                 self.stmts_to_js(body, true, PREC_MAX)
             }
             JsAst::For { pre, cond, post, body } => {
                 self.buf.push_str("for (");
-                if self.to_js(pre, PREC_MAX) == NeedSemi::Yes {
+                if self.to_js(pre, PREC_MAX, false) == NeedSemi::Yes {
                     self.buf.push_str(";");
                 }
-                self.to_js(cond, PREC_MAX);
+                self.to_js(cond, PREC_MAX, true);
                 self.buf.push_str(";");
-                self.to_js(post, PREC_MAX);
+                self.to_js(post, PREC_MAX, true);
                 self.buf.push_str(") ");
                 self.stmts_to_js(body, true, PREC_MAX)
             }
@@ -786,7 +786,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     JsUnop::PreInc => "++",
                     JsUnop::PreDec => "--",
                 });
-                self.to_js(value, prec.on_right());
+                self.to_js(value, prec.on_right(), true);
 
                 self.unwrap_p(p);
                 NeedSemi::Yes
@@ -812,7 +812,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 };
 
                 let p = self.wrap_p(slot, prec);
-                self.to_js(left, prec.on_left());
+                self.to_js(left, prec.on_left(), true);
                 self.buf.push_str(match op {
                     JsOp::Mul => " * ",
                     JsOp::Div => " / ",
@@ -842,7 +842,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     JsOp::Gt => " > ",
                     JsOp::Ge => " >= ",
                 });
-                self.to_js(right, prec.on_right());
+                self.to_js(right, prec.on_right(), true);
                 self.unwrap_p(p);
                 NeedSemi::Yes
             },
@@ -878,10 +878,10 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     _ => {
                         if member == "new" {
                             self.buf.push_str("new ");
-                            self.to_js(base, PREC_NEW.on_left());
+                            self.to_js(base, PREC_NEW.on_left(), true);
                         } else {
                             let p = self.wrap_p(slot, PREC_DOT_BRACKET);
-                            self.to_js(base, PREC_DOT_BRACKET.on_left());
+                            self.to_js(base, PREC_DOT_BRACKET.on_left(), true);
                             self.buf.push('.');
                             self.buf.push_str(member);
                             self.unwrap_p(p);
@@ -892,9 +892,9 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
             },
             JsAst::Index { expr, index } => {
                 let p = self.wrap_p(slot, PREC_DOT_BRACKET);
-                self.to_js(expr, PREC_DOT_BRACKET.on_left());
+                self.to_js(expr, PREC_DOT_BRACKET.on_left(), true);
                 self.buf.push('[');
-                self.to_js(index, PREC_MAX);
+                self.to_js(index, PREC_MAX, true);
                 self.buf.push(']');
                 self.unwrap_p(p);
                 NeedSemi::Yes
@@ -919,9 +919,9 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
 
                 if method == "new" {
                     self.buf.push_str("new ");
-                    self.to_js(receiver, PREC_NEW.on_left());
+                    self.to_js(receiver, PREC_NEW.on_left(), true);
                 } else {
-                    self.to_js(receiver, PREC_DOT_BRACKET.on_left());
+                    self.to_js(receiver, PREC_DOT_BRACKET.on_left(), true);
                     self.buf.push('.');
                     self.buf.push_str(method);
                 }
@@ -933,7 +933,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     } else {
                         self.buf.push_str(", ");
                     }
-                    self.to_js(arg, PREC_COMMA.on_either());
+                    self.to_js(arg, PREC_COMMA.on_either(), true);
                 }
                 self.buf.push(')');
 
@@ -959,13 +959,13 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
 
                 self.buf.push_str(") ");
                 // TODO: Wrap in {} if body is not a Block
-                self.to_js(body, PREC_MAX);
+                self.to_js(body, PREC_MAX, false);
                 //self.buf.push_str("\n");
                 NeedSemi::Yes
             },
             JsAst::Return { value } => {
                 self.buf.push_str("return ");
-                self.to_js(value, PREC_MAX);
+                self.to_js(value, PREC_MAX, true);
                 NeedSemi::Yes
             },
             &JsAst::ModuleRef { abs_index } => {

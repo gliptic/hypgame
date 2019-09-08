@@ -54,7 +54,7 @@ let MAX_BATCH = 10922
 #let MAT_SIZE = 6
 let VERTICES_PER_QUAD = 6
 let QUAD_SIZE_IN_WORDS = (VERTEX_SIZE * VERTICES_PER_QUAD) / 4
-let VERTEX_DATA_SIZE = VERTEX_SIZE * MAX_BATCH * 6
+let VERTEX_DATA_SIZE = VERTEX_SIZE * (MAX_BATCH * 6 + 32) # Some margin
 
 let VBO
 #let count = 0
@@ -196,6 +196,65 @@ pub fn flush() {
     currentTexture := null
 }
 
+# floor, edge_direction
+pub fn prism(texture, fx, fy, fz, ex, ey, ez) {
+    let e1x = fx + ex, e1y = fy + ey
+    let e2x = fx - ey, e2y = fy + ex
+    let e3x = fx - ex, e3y = fy - ey
+    let e4x = fx + ey, e4y = fy - ex
+    let mz = fz + ez
+    let cz = fz + ez + ez
+
+    let abgr = col
+
+    if (texture != currentTexture) {
+        flush()
+        currentTexture := texture
+        gl.bindTexture(GL_TEXTURE_2D, currentTexture)
+    }
+
+    var a = (abgr >>> 24) / 255
+    var b = ((abgr >> 16) & 0xff) / 255
+    var g = ((abgr >> 8) & 0xff) / 255
+    var r = (abgr & 0xff) / 255
+
+    if (vertexData.push(
+        fx, fz, fy, 0,0,r,g,b,a,
+        e1x,mz, e1y,0,0,r,g,b,a,
+        e2x,mz, e2y,0,0,r,g,b,a,
+
+        fx, fz, fy, 0,0,r,g,b,a,
+        e2x,mz, e2y,0,0,r,g,b,a,
+        e3x,mz, e3y,0,0,r,g,b,a,
+
+        fx, fz, fy, 0,0,r,g,b,a,
+        e3x,mz, e3y,0,0,r,g,b,a,
+        e4x,mz, e4y,0,0,r,g,b,a,
+
+        fx, fz, fy, 0,0,r,g,b,a,
+        e4x,mz, e4y,0,0,r,g,b,a,
+        e1x,mz, e1y,0,0,r,g,b,a,
+
+        fx, cz, fy, 0,0,r,g,b,a,
+        e1x,mz, e1y,0,0,r,g,b,a,
+        e2x,mz, e2y,0,0,r,g,b,a,
+
+        fx, cz, fy, 0,0,r,g,b,a,
+        e2x,mz, e2y,0,0,r,g,b,a,
+        e3x,mz, e3y,0,0,r,g,b,a,
+
+        fx, cz, fy, 0,0,r,g,b,a,
+        e3x,mz, e3y,0,0,r,g,b,a,
+        e4x,mz, e4y,0,0,r,g,b,a,
+
+        fx, cz, fy, 0,0,r,g,b,a,
+        e4x,mz, e4y,0,0,r,g,b,a,
+        e1x,mz, e1y,0,0,r,g,b,a) >= MAX_BATCH * QUAD_SIZE_IN_WORDS) {
+
+        flush();
+    }
+}
+
 pub fn wall3d(texture, fx0, fz0, fx1, fz1, fy, cy, u0, v0, u1, v1) {
     let x0 = fx0,     y0 = fy,     z0 = fz0
     let x1 = fx1,     y1 = fy,     z1 = fz1
@@ -205,10 +264,8 @@ pub fn wall3d(texture, fx0, fz0, fx1, fz1, fy, cy, u0, v0, u1, v1) {
 
     if (texture != currentTexture) {
         flush()
-        #if (currentTexture != texture) {
         currentTexture := texture
         gl.bindTexture(GL_TEXTURE_2D, currentTexture)
-        #}
     }
 
     var a = (abgr >>> 24) / 255;

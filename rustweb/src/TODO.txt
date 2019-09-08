@@ -1,9 +1,52 @@
-* Render cells and use gl.enable(gl.CULL_FACE);
 * Why use WebGL2:
     uniform buffer object? could be less code? at least for wasm/typed array work
     no need to getExtension for standard derivatives
     in/out in shaders
-* Remember to test controls with normal keyboard layout
-* Record walls to render instead of squares? Unless it is an object
-* Draw sound data directly onto the framebuffer and readPixels it out at startup
-* Pass skypos.xy as texcoords, z from pos.z
+* Save progress in localStorage (what prefix?)
+* Game is slow in Edge. Sweep is really slow. How to improve?
+    * Add counters to things and see if anything sticks out
+    * Test compiled js too, closure compiler might fix the worst problems
+* Flatten origin, dir, pos_diff in sweep5
+* Turn player_states into array, easier to iterate
+* Flatten pos/aim in player_state
+* Flatten from/to in lines/sky etc.
+
+Map plan:
+* Pause timer while:
+    * Info-text for WASD controls
+    * Demo of switches and doors
+* Window that shows progressive futures
+* Demo of portals, including what happens if you violate consistency
+* Demo of time speed up/slow down
+* Demo invisibility cloak crystal that lasts for N seconds
+    * Aids returning many times
+* Demo of key switches, and dropping
+* Map
+    * Two switches that has to be activated the same time to open door
+* Bring key back in time through one-way door
+    * Objectives that sets switches
+
+Release checklist:
+* https://github.com/js13kGames/bot#readme
+* Test in Firefox, Chrome, Edge
+* index.html
+* Write:
+    nick
+    description
+    email address
+    link to git
+    title of game
+    make small and big screenshots (160x160 and 400x250)
+* Remember to test controls with normal keyboard layout (even editor?)
+    * Keys in variables?
+* Check that no console.log is left as not @debug
+* Search for "TEMP" and fix
+* Fix any errors/warnings from closure compiler/browser
+* Search TODOs and see if there are quickfixes
+* Squash and push to new rep
+
+Immediate TODO:
+
+Done:
+* Add keys, pickup keys
+* Exit, reset timer
