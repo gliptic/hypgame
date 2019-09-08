@@ -1,9 +1,10 @@
 use crate::{JsAst, JsLit, JsOp, JsUnop, JsBuiltin, JsPattern};
 //use crate::glsl_bundler::{self, GlslBundler, GlslCollection};
-use crate::hyp_parser::{self as hyp, ModuleInfo, Ident, Language, AstLambda};
-use crate::{hyp_to_js, hyp_to_glsl, glsl_bundler};
+use crate::hyp::{self, ModuleInfo, Ident, Language, AstLambda};
+use crate::{hyp_to_js, glsl_bundler};
 use std::collections::{HashMap, HashSet};
 use crate::conflict_tree::ConflictTree;
+use crate::binary;
 
 // TODO: Move JsBundler to own file
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -30,7 +31,6 @@ impl Prec {
 const PREC_DOT_BRACKET: Prec = Prec(1, -1);
 const PREC_NEW: Prec = Prec(1, 1);
 const PREC_CALL: Prec = Prec(2, -1);
-const PREC_SELECT: Prec = Prec(4, 1);
 const PREC_MUL_DIV_REM: Prec = Prec(5, -1);
 const PREC_PLUS_MINUS: Prec = Prec(6, -1);
 const PREC_SHIFT: Prec = Prec(7, -1);
@@ -41,6 +41,7 @@ const PREC_BITXOR: Prec = Prec(11, -1);
 const PREC_BITOR: Prec = Prec(12, -1);
 const PREC_ANDAND: Prec = Prec(13, -1);
 const PREC_OROR: Prec = Prec(14, -1);
+const PREC_SELECT: Prec = Prec(15, 1);
 const PREC_ASSIGN: Prec = Prec(16, 1);
 const PREC_COMMA: Prec = Prec(17, -1);
 const PREC_MAX: Prec = Prec(18, 0);
@@ -128,7 +129,7 @@ impl<'a> JsBundler<'a> {
             seen: &mut HashSet<String>) {
 
             for &((abs_index, local_index), _) in &node.items {
-                let local_name = &mut module_infos[abs_index as usize].locals[local_index as usize].1;
+                let local_name = &mut module_infos[abs_index as usize].locals[local_index as usize].name;
                 //seen.insert(local_name.clone());
 
                 if seen.contains(local_name) {
@@ -150,7 +151,7 @@ impl<'a> JsBundler<'a> {
             }
 
             for &((abs_index, local_index), _) in &node.items {
-                let local_name = &module_infos[abs_index as usize].locals[local_index as usize].1;
+                let local_name = &module_infos[abs_index as usize].locals[local_index as usize].name;
                 seen.remove(local_name);
             }
         }
@@ -241,6 +242,9 @@ impl<'a> JsBundler<'a> {
         let glsl = glsl_bundler::GlslBundler::bundle(&mut self.module_infos, &self.module_lambdas, &module_order, debug);
         self.write_glsl(glsl);
 
+        let bin = binary::bundler::Bundler::bundle(&mut self.module_infos);
+        self.write_bin(bin);
+
         // TODO: Combine together e.g. binaries and process as a unit
 
         for order_index in 0..module_order.len() {
@@ -265,9 +269,6 @@ impl<'a> JsBundler<'a> {
                 }
                 self.current_module = module_index as usize;
                 self.stmts_inner_to_js(&enc.module.items, PREC_MAX, false);
-            } else if lang == hyp::Language::Binary {
-                self.current_module = module_index as usize;
-                self.binary_to_js();
             }
         }
 
@@ -417,14 +418,10 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
         }
     }
 
-    pub fn ident_to_str(&self, ident: &Ident) -> String {
-        ident.clone()
-    }
-
     pub fn pattern_to_js(&mut self, pat: &JsPattern) {
         match pat {
             JsPattern::Local(i) => {
-                let param_name = &self.module_infos[self.current_module].locals[*i as usize].1;
+                let param_name = &self.module_infos[self.current_module].locals[*i as usize].name;
                 self.buf.push_str(param_name);
             }
             JsPattern::Array(subpats) => {
@@ -443,6 +440,33 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
         }
     }
 
+    pub fn write_bin(&mut self, bun: binary::BundledModules) {
+        if bun.js_safe.len() > 0 || bun.base64.len() > 0 {
+            self.buf.push_str("var $bin=(");
+            //let mi = &self.module_infos[self.current_module];
+            if bun.js_safe.len() > 0 {
+                self.buf.push_str("\"");
+                self.buf.push_str(std::str::from_utf8(&bun.js_safe[..]).unwrap());
+                self.buf.push_str("\"");
+            }
+
+            if bun.base64.len() > 0 {
+                if bun.js_safe.len() > 0 {
+                    self.buf.push_str("+");
+                }
+
+                self.buf.push_str("atob(\"");
+                base64::encode_config_buf(&bun.base64, base64::STANDARD, &mut self.buf);
+                while self.buf.as_bytes().last().unwrap() == &b'=' {
+                    // The '=' is unnecessary
+                    self.buf.pop();
+                }
+                self.buf.push_str("\")");
+            }
+            self.buf.push_str(").split('').map(x=>x.charCodeAt(0));");
+        }
+    }
+
     pub fn binary_to_js(&mut self) {
         let mi = &self.module_infos[self.current_module];
         self.buf.push_str("var ");
@@ -458,8 +482,8 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
         match ast {
             JsAst::Fn { index, expr, args, .. } => {
                 self.buf.push_str("function ");
-                let name = &self.module_infos[self.current_module].locals[*index as usize].1;
-                self.buf.push_str(&self.ident_to_str(name));
+                let name = &self.module_infos[self.current_module].locals[*index as usize].name;
+                self.buf.push_str(&name);
                 self.buf.push_str("(");
                 let mut first = true;
                 for i in args {
@@ -636,10 +660,10 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 NeedSemi::No
             },
             &JsAst::Global { index, constant, ref value } => {
-                let name = &self.module_infos[self.current_module].locals[index as usize].1;
+                let name = &self.module_infos[self.current_module].locals[index as usize].name;
                 // TODO: Use var instead of const for compactness?
                 self.buf.push_str(if constant { "const " } else { "var " });
-                self.buf.push_str(&self.ident_to_str(name));
+                self.buf.push_str(&name);
                 self.buf.push_str(" = ");
                 self.to_js(value, PREC_ASSIGN.on_right());
                 self.buf.push_str(";");
@@ -655,7 +679,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                         self.buf.push_str(", ");
                     }
                     let index = local_indexes[i];
-                    let name = &self.module_infos[self.current_module].locals[index as usize].1;
+                    let name = &self.module_infos[self.current_module].locals[index as usize].name;
                     
                     self.buf.push_str(name);
                     if i < values.len() {
@@ -772,6 +796,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     JsOp::Mul | JsOp::Div | JsOp::Rem => PREC_MUL_DIV_REM,
                     JsOp::Add | JsOp::Sub => PREC_PLUS_MINUS,
                     JsOp::MulEq | JsOp::DivEq | JsOp::RemEq | JsOp::AddEq | JsOp::SubEq
+                      | JsOp::OrEq | JsOp::AndEq | JsOp::XorEq
                         => PREC_ASSIGN,
                     JsOp::Eq | JsOp::Ne
                         => PREC_EQ,
@@ -797,6 +822,9 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                     JsOp::MulEq => " *= ",
                     JsOp::DivEq => " /= ",
                     JsOp::RemEq => " %= ",
+                    JsOp::OrEq => " |= ",
+                    JsOp::AndEq => " &= ",
+                    JsOp::XorEq => " ^= ",
                     JsOp::AddEq => " += ",
                     JsOp::SubEq => " -= ",
                     JsOp::BitAnd => " & ",
@@ -949,7 +977,7 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 let mi = &self.module_infos[abs_index as usize];
 
                 if mi.language == Language::Glsl {
-                    let (ty, name) = &mi.locals[local_index as usize];
+                    let hyp::LocalDef { ty, name, .. } = &mi.locals[local_index as usize];
                     
                     if ty.is_fn() {
                         // TODO: Look up aux data for the local to find index into stringified source
@@ -965,12 +993,14 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                             self.buf.push_str("<invalid glsl function ref>");
                         }
                     } else {
-                        self.str_lit(&self.ident_to_str(name));
+                        // TODO: This is temporary until we separate buffer writer like in glsl
+                        let name_clone = name.clone();
+                        self.str_lit(&name_clone);
                     }
 
                 } else {
-                    let name = &mi.locals[local_index as usize].1;
-                    self.buf.push_str(&self.ident_to_str(name));
+                    let name = &mi.locals[local_index as usize].name;
+                    self.buf.push_str(&name);
                 }
                 /*
                 let export_index = module_info
@@ -996,8 +1026,8 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
             }
             
             JsAst::Local { index } => {
-                let name = &self.module_infos[self.current_module].locals[*index as usize].1;
-                self.buf.push_str(&self.ident_to_str(name));
+                let name = &self.module_infos[self.current_module].locals[*index as usize].name;
+                self.buf.push_str(&name);
                 NeedSemi::Yes
             }
             JsAst::Undefined => {

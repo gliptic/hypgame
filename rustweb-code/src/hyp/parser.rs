@@ -1,6 +1,8 @@
 use std::collections::{HashMap};
-use std::path::{Path, PathBuf};
-use crate::conflict_tree::ConflictTree;
+use std::path::{PathBuf};
+use std::rc::Rc;
+
+use super::*;
 
 const LEX_DIGIT: u16 = 1 << 0;
 const LEX_BEG_IDENT: u16 = 1 << 1;
@@ -50,258 +52,12 @@ const TT_SEMICOLON: u16 = 32;
 const TT_NEW: u16 = 33;
 const TT_BREAK: u16 = 34;
 const TT_IN: u16 = 35;
+const TT_DOUBLEDOT: u16 = 36;
+const TT_TYPE: u16 = 37;
 const TT_EOF: u16 = 254;
 const TT_INVALID: u16 = 255;
 
 type Tt = u16;
-
-pub type AstRef = Box<Ast>;
-pub type LocalRef = u32;
-pub type Ident = String;
-
-#[derive(Debug)]
-pub struct ParseError(pub Span, pub &'static str);
-
-pub type ParseResult<T> = Result<T, ParseError>;
-pub type ModuleResult<T> = Result<T, (Vec<u8>, PathBuf, ParseError)>;
-
-#[derive(Clone, Debug)]
-pub struct ParamDef {
-    //pub name: Ident,
-    pub pat: Pattern,
-    pub ty: AstType,
-    //pub local_index: u32
-}
-
-#[derive(Clone, Debug)]
-pub enum Pattern {
-    Local(u32),
-    Array(Vec<Pattern>)
-}
-
-#[derive(Clone, Debug)]
-pub enum Local {
-    ModuleRef { abs_index: u32 },
-    ModuleMember { abs_index: u32, local_index: u32 },
-    Builtin { name: String, ty: AstType },
-    //SelfMember { member_index: u32 },
-    Local { index: u32, inline: Option<Box<Ast>> }
-}
-
-#[derive(Clone, Debug)]
-pub struct AstLambda {
-    pub params: Vec<ParamDef>,
-    pub param_locals: Vec<u32>,
-    pub expr: Vec<Ast>,
-    pub return_type: AstType
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum AppKind {
-    Normal,
-    Binary,
-    Unary
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Attr {
-    None,
-    Attribute,
-    Varying,
-    Uniform,
-    Binary,
-    Inline,
-    Debug
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Language {
-    Js,
-    Glsl,
-    Binary
-}
-
-#[derive(Clone, Debug)]
-pub struct Use(pub Attr, pub Ident);
-
-#[derive(Clone, Debug)]
-pub enum AstData {
-    ConstNum { v: u64 },
-    ConstFloat { v: f64 },
-    ConstStr { v: String },
-    Ident { s: Ident },
-    Local { local: Local },
-    App { fun: AstRef, params: Vec<Ast>, kind: AppKind },
-    Lambda { lambda: AstLambda },
-    Block { expr: Vec<Ast> },
-    LetLocal { name: Ident, ty: AstType, init: Option<AstRef>, local_index: u32, attr: Attr },
-    FnLocal { name: Ident, lambda: AstLambda, local_index: u32, exported: bool },
-    Field { base: AstRef, member: AstRef },
-    For { name: Ident, pat: u32, iter: (AstRef, AstRef), body: AstLambda },
-    Index { base: AstRef, index: AstRef }, // TODO: Same as above?
-    Array { elems: Vec<Ast> },
-    If { cond: AstRef, body: AstLambda, else_body: Option<AstRef> },
-    While { cond: AstRef, body: AstLambda },
-    Loop { body: AstLambda },
-    Break,
-    Return { value: Option<AstRef> },
-    Use { name: Ident, rel_index: u32 },
-    NewObject { assignments: Vec<(Ident, Ast)> },
-    NewCtor { ctor: Box<Ast>, params: Vec<Ast> },
-    Void
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AstType {
-    None,
-    Any,
-    U64,
-    I32,
-    U32,
-    F64,
-    F32,
-    U8,
-    Str,
-    Fn(Box<AstType>, Vec<AstType>),
-    Ctor(Box<AstType>), // Arbitrary parameters for now
-    Vec(Box<AstType>, u32),
-    Mat(Box<AstType>, u32, u32),
-    Other(Ident)
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct AstTy(u32);
-
-impl AstTy {
-    const fn uninit() -> AstTy {
-        AstTy(0)
-    }
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct AstTyParams {
-    params: Vec<AstTy>,
-    rest: bool
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct AstTyInt {
-    bits: u32,
-    signed: bool
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub enum AstTyData {
-    None,
-    Any,
-    Int(AstTyInt),
-    Float(u32),
-    Fn(AstTy, AstTyParams),
-    Vec(AstTy, u32),
-    Mat(AstTy, u32, u32)
-}
-
-impl AstType {
-    pub fn is_any(&self) -> bool {
-        match self {
-            AstType::Any => true,
-            _ => false
-        }
-    }
-
-    pub fn is_fn(&self) -> bool {
-        match self {
-            AstType::Fn { .. } => true,
-            _ => false
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Span(pub usize, pub usize);
-
-#[derive(Clone, Debug)]
-pub struct Ast {
-    pub ty: AstType,
-    pub loc: Span,
-    pub attr: Attr,
-    pub data: AstData
-}
-
-// TODO: ModuleInfo is a very large subset of Module
-
-#[derive(Clone, Debug)]
-pub struct Module {
-    pub lambda: AstLambda,
-    pub src: Vec<u8>,
-    pub path: PathBuf,
-    pub uses: Vec<Use>,
-    pub locals: Vec<(AstType, Ident)>,
-    pub exports: Vec<u32>, // indexes into locals
-    pub exports_rev: HashMap<Ident, u32>,
-    pub language: Language,
-}
-
-#[derive(Debug)]
-pub struct ModuleInfo {
-    pub name: String,
-    pub src: Vec<u8>,
-    pub path: PathBuf,
-    pub locals: Vec<(AstType, Ident)>,
-    pub exports: Vec<u32>, // indexes into locals
-    pub exports_rev: HashMap<Ident, u32>,
-    pub import_map: Vec<u32>,
-    pub conflict_tree: ConflictTree<u32>,
-    pub language: Language,
-}
-
-pub fn print_line_at(data: &[u8], err: &ParseError, path: &Path) {
-    let mut start = (err.0).0;
-    while start > 0 && data[start - 1] != b'\n' {
-        start -= 1;
-    }
-    let mut line = 1;
-    let mut col = 1;
-    for &d in &data[..(err.0).0] {
-        if d == b'\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-    }
-
-    let mut stop = (err.0).0;
-    while stop < data.len() && data[stop + 1] != b'\n' {
-        stop += 1;
-    }
-
-    println!("--> {}:{}:{}", &path.display(), line, col);
-    println!(" | {}", std::str::from_utf8(&data[start..stop]).unwrap());
-    println!(" {}", err.1);
-}
-
-impl ModuleInfo {
-    pub fn from_module(module_name: String, import_map: Vec<u32>, module: Module) -> (AstLambda, ModuleInfo) {
-        (module.lambda, ModuleInfo {
-            name: module_name,
-            src: module.src,
-            path: module.path,
-            locals: module.locals,
-            exports: module.exports,
-            exports_rev: module.exports_rev,
-            conflict_tree: ConflictTree::new(),
-            import_map,
-            language: module.language
-        })
-    }
-
-    pub fn print_line_at(&self, err: &ParseError) {
-        let data = &self.src;
-        let path = &self.path;
-        print_line_at(data, err, path);
-    }
-}
 
 const fn ltab_pair(a: u16, b: u16) -> u16 {
     a | (b << 8)
@@ -320,11 +76,12 @@ pub struct Parser {
     token_ident: Ident,
     token_prec: u8,
     is_rtl: bool,
-    token_number: u64,
+    token_number: i64,
     token_float: f64,
     //module: Module,
     uses: Vec<Use>,
-    locals: Vec<(AstType, Ident)>,
+    locals: Vec<LocalDef>,
+    local_types: Vec<TypeDef>,
     exports: Vec<u32>, // indexes into locals
     exports_rev: HashMap<Ident, u32>,
     language: Language,
@@ -368,14 +125,14 @@ impl Parser {
             (b']', ltab_pair(LEX_SINGLE_CHAR, TT_RBRACKET)),
             (b',', ltab_pair(LEX_SINGLE_CHAR, TT_COMMA)),
             (b';', ltab_pair(LEX_SINGLE_CHAR, TT_SEMICOLON)),
-            (b'.', ltab_pair(LEX_SINGLE_CHAR, TT_DOT)),
+            //(b'.', ltab_pair(LEX_SINGLE_CHAR, TT_DOT)),
             //(b'?', ltab_pair(LEX_SINGLE_CHAR, TT_QUESTIONMARK)),
             (b':', ltab_pair(LEX_OP, 0)),
             (b'|', ltab_pair(LEX_OP, 1)),
-            (b'!', ltab_pair(LEX_OP, 1)),
             (b'@', ltab_pair(LEX_OP, 2)),
             (b'&', ltab_pair(LEX_OP, 2)),
             (b'^', ltab_pair(LEX_OP, 2)),
+            (b'!', ltab_pair(LEX_OP, 3)),
             (b'=', ltab_pair(LEX_OP, 3)),
             (b'<', ltab_pair(LEX_OP, 3)),
             (b'>', ltab_pair(LEX_OP, 3)),
@@ -385,6 +142,7 @@ impl Parser {
             (b'%', ltab_pair(LEX_OP, 5)),
             (b'/', ltab_pair(LEX_OP, 5)),
             (b'~', ltab_pair(LEX_OP, 5)),
+            (b'.', ltab_pair(LEX_OP, 6)),
         ];
 
         for &(c, lt) in &charmaps[..] {
@@ -404,6 +162,7 @@ impl Parser {
             is_rtl: false,
             uses: Vec::new(),
             locals: Vec::new(),
+            local_types: vec![],
             exports: Vec::new(),
             exports_rev: HashMap::new(),
             language: Language::Js,
@@ -438,6 +197,8 @@ impl Parser {
             tt = match ident_slice {
                 //b"|" => TT_BAR,
                 b"=" => TT_EQUAL,
+                b"." => TT_DOT,
+                b".." => TT_DOUBLEDOT,
                 b":" => TT_COLON,
                 b"@" => TT_AT, // TODO: Leave as operator?
                 b"let" => TT_LET,
@@ -455,6 +216,7 @@ impl Parser {
                 b"else" => TT_ELSE,
                 b"use" => TT_USE,
                 b"new" => TT_NEW,
+                b"type" => TT_TYPE,
                 b"break" => TT_BREAK,
                 _ => {
                     self.token_ident = String::from_utf8_lossy(&self.src[ident_beg..ident_end]).into_owned();
@@ -519,6 +281,7 @@ impl Parser {
                  && self.tt != TT_LBRACE
                  && self.tt != TT_COMMA
                  && self.tt != TT_DOT
+                 && self.tt != TT_DOUBLEDOT
                  && self.tt != TT_SEMICOLON
                  && self.tt != TT_EQUAL
                  //&& self.tt != TT_BAR
@@ -526,6 +289,7 @@ impl Parser {
                  && self.tt != TT_TYP
                  && self.tt != TT_FUN
                  && self.tt != TT_LET
+                 && self.tt != TT_TYPE
                  && self.tt != TT_DOLLAR {
 
                     self.tt = TT_SEMICOLON;
@@ -563,7 +327,7 @@ impl Parser {
                 }
 
                 let end = self.cur;
-                self.token_number = u64::from_str_radix(
+                self.token_number = i64::from_str_radix(
                         std::str::from_utf8(&self.src[hex_start..end]).unwrap(), 16).unwrap();
                 tt = TT_CONSTINT;
             } else {
@@ -597,7 +361,7 @@ impl Parser {
                     tt = TT_CONSTFLOAT;
                 } else {
                     let end = self.cur;
-                    self.token_number = std::str::from_utf8(&self.src[start..end]).unwrap().parse::<u64>().unwrap();
+                    self.token_number = std::str::from_utf8(&self.src[start..end]).unwrap().parse::<i64>().unwrap();
                     tt = TT_CONSTINT;
                 }
             }
@@ -669,8 +433,38 @@ impl Parser {
     }
 
     pub fn rtype(&mut self) -> ParseResult<AstType> {
-        let name = self.check_ident()?;
-        Ok(AstType::Other(name))
+        if self.tt == TT_OPIDENT {
+            match &self.token_ident[..] {
+                "&" => {
+                    self.next();
+                    Ok(AstType::Ptr(Box::new(self.rtype()?)))
+                }
+                _ => Err(ParseError(self.span(), "unexpected type operator"))
+            }
+        } else if self.test(TT_LBRACE) {
+            let mut fields = Vec::new();
+            
+            while self.tt != TT_RBRACE && self.tt != TT_EOF {
+                let name = self.check_ident()?;
+                self.check(TT_COLON)?;
+                let ty = self.rtype()?;
+                
+                fields.push(StructField::new(name, ty));
+
+                if !self.test_comma_or_semi() {
+                    break;
+                }
+            }
+
+            self.check(TT_RBRACE)?;
+
+            let struct_def = StructDef::new(fields);
+
+            Ok(AstType::MemStruct(Rc::new(struct_def)))
+        } else {
+            let name = self.check_ident()?;
+            Ok(AstType::Other(name))
+        }
     }
 
     pub fn span(&self) -> Span {
@@ -697,7 +491,8 @@ impl Parser {
     pub fn rpattern(&mut self, locals: &mut Vec<u32>, parent_ty: &AstType) -> ParseResult<Pattern> {
         if self.tt == TT_IDENT {
             let name = self.check_ident()?;
-            let local_index = self.new_local(name.clone(), parent_ty.clone());
+            // TODO: Mutable pattern var
+            let local_index = self.new_local(name.clone(), parent_ty.clone(), false);
             locals.push(local_index);
             Ok(Pattern::Local(local_index))
         } else if self.test(TT_LBRACKET) {
@@ -790,10 +585,12 @@ impl Parser {
     pub fn rprimary_del(&mut self) -> ParseResult<Ast> {
         let r = match self.tt {
             TT_CONSTINT => {
-                Ast { loc: self.span(), attr: Attr::None, ty: AstType::U64, data: AstData::ConstNum { v: self.token_number } }
+                Ast { loc: self.span(), attr: Attr::None, ty: AstType::U64,
+                    data: AstData::ConstLit { v: Lit::Int(self.token_number) } }
             },
             TT_CONSTFLOAT => {
-                Ast { loc: self.span(), attr: Attr::None, ty: AstType::F64, data: AstData::ConstFloat { v: self.token_float } }
+                Ast { loc: self.span(), attr: Attr::None, ty: AstType::F64,
+                    data: AstData::ConstLit { v: Lit::Float(self.token_float) } }
             },
             TT_CONSTSTR => {
                 Ast {
@@ -887,7 +684,7 @@ impl Parser {
     pub fn rsimple_expr_tail(&mut self, mut r: Ast) -> ParseResult<Ast> {
         loop {
             if self.test(TT_DOT) {
-                let range = self.test(TT_DOT);
+                let range = false; // TODO: Use TT_DOUBLEDOT
                 let member = self.rprimary_del()?;
                 if range {
                     //r = self.ast_anyty(AstData::Range { from: Box::new(r), to: Box::new(member) });
@@ -928,7 +725,7 @@ impl Parser {
             }
             */
 
-            if self.tt != TT_DOT {
+            if self.tt != TT_DOT && self.tt != TT_LBRACKET && self.tt != TT_LPAREN {
                 break;
             }
         }
@@ -973,16 +770,18 @@ impl Parser {
             let name = self.check_ident()?;
             let local_index = self.new_local(
                         name.clone(),
-                        AstType::Any);
+                        AstType::Any,
+                        true); // TODO: Immutable let?
 
             self.check(TT_IN)?;
 
-            let from = self.rprimary_del()?;
-            self.next();
-            self.check(TT_DOT)?;
-            self.check(TT_DOT)?;
-            let to = self.rprimary_del()?;
-            self.next();
+            let from = self.rexpr()?;
+            //self.next();
+            self.check(TT_DOUBLEDOT)?;
+            //self.check(TT_DOT)?;
+            //self.check(TT_DOT)?;
+            let to = self.rexpr()?;
+            //self.next();
             //r = self.ast_anyty(AstData::Range { from: Box::new(r), to: Box::new(member) });
             //let iter = self.rexpr()?;
             let body = self.rlambda_block_del()?;
@@ -1088,6 +887,7 @@ impl Parser {
                     path: self.path,
                     uses: self.uses,
                     locals: self.locals,
+                    local_types: self.local_types,
                     exports: self.exports,
                     exports_rev: self.exports_rev,
                     language: self.language
@@ -1108,9 +908,20 @@ impl Parser {
         }
     }
 
-    pub fn new_local(&mut self, name: Ident, ty: AstType) -> u32 {
+    pub fn new_local(&mut self, name: Ident, ty: AstType, is_mut: bool) -> u32 {
         let index = self.locals.len();
-        self.locals.push((ty, name));
+        self.locals.push(LocalDef {
+            ty, name, is_mut,
+            const_value: None,
+        });
+        index as u32
+    }
+
+    pub fn new_local_type(&mut self, name: Ident, ty: AstType) -> u32 {
+        let index = self.local_types.len();
+        self.local_types.push(TypeDef {
+            name, ty
+        });
         index as u32
     }
 
@@ -1213,7 +1024,8 @@ impl Parser {
                 // TODO: Set type correctly
                 let local_index = self.new_local(
                     name.clone(),
-                    AstType::None);
+                    AstType::None,
+                    false);
 
                 if is_pub {
                     self.exports.push(local_index);
@@ -1228,6 +1040,20 @@ impl Parser {
                         exported: is_pub
                     }));
                 // TODO: self.skip();
+            } else if self.tt == TT_TYPE {
+                self.next();
+                let name = self.check_ident()?;
+                self.check(TT_EQUAL)?;
+                let ty = self.rtype()?;
+
+                let index = self.new_local_type(name, ty);
+                lambda.expr.push(Ast {
+                    loc: self.span(),
+                    attr: Attr::None,
+                    ty: AstType::None,
+                    data: AstData::TypeDef { index }
+                });
+                
             } else if self.tt == TT_LET || self.tt == TT_VAR {
                 let is_mut = self.tt == TT_VAR;
 
@@ -1254,7 +1080,8 @@ impl Parser {
 
                     let local_index = self.new_local(
                         name.clone(),
-                        ty.clone()); // TODO: ty will not be needed below later on
+                        ty.clone(),
+                        is_mut); // TODO: ty will not be needed below later on
 
                     if is_pub {
                         self.exports.push(local_index);

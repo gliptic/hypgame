@@ -1,7 +1,7 @@
 //use serde::{Serialize, Deserialize};
 //use std::collections::{HashMap, hash_map};
 use crate::js_ast::{JsLit, JsOp, JsUnop, JsAst, JsModule, JsPattern};
-use crate::hyp_parser::{self as hyp};
+use crate::hyp;
 
 pub struct JsEnc {
     pub module: JsModule,
@@ -40,37 +40,54 @@ impl JsEnc {
         }
     }
 
-    pub fn map_binop(&mut self, ast: &hyp::Ast, op: &hyp::Ident) -> JsOp {
-        match &op[..] {
-            "*" => JsOp::Mul,
-            "/" => JsOp::Div,
-            "+" => JsOp::Add,
-            "-" => JsOp::Sub,
-            "%" => JsOp::Rem,
-            "*=" => JsOp::MulEq,
-            "/=" => JsOp::DivEq,
-            "+=" => JsOp::AddEq,
-            "-=" => JsOp::SubEq,
-            "%=" => JsOp::RemEq,
-            "|" => JsOp::BitOr,
-            "&" => JsOp::BitAnd,
-            "^" => JsOp::BitXor,
-            "&&" => JsOp::AndAnd,
-            "||" => JsOp::OrOr,
-            "<<" => JsOp::Shl,
-            ">>" => JsOp::Shr,
-            ">>>" => JsOp::Lshr,
-            "==" => JsOp::Eq,
-            "===" => JsOp::Eq,
-            "<" => JsOp::Lt,
-            "<=" => JsOp::Le,
-            "!=" => JsOp::Ne,
-            ">" => JsOp::Gt,
-            ">=" => JsOp::Ge,
-            _ => {
-                self.add_error(&ast, "unimplemented binary op");
-                JsOp::Add
+    pub fn map_binop(&mut self, ast: &hyp::Ast, op: &hyp::AstData) -> JsOp {
+        if let hyp::AstData::Ident { s } = op {
+        
+            match &s[..] {
+                "*" => JsOp::Mul,
+                "/" => JsOp::Div,
+                "+" => JsOp::Add,
+                "-" => JsOp::Sub,
+                "%" => JsOp::Rem,
+                "*=" => JsOp::MulEq,
+                "/=" => JsOp::DivEq,
+                "+=" => JsOp::AddEq,
+                "-=" => JsOp::SubEq,
+                "%=" => JsOp::RemEq,
+                "|=" => JsOp::OrEq,
+                "&=" => JsOp::AndEq,
+                "^=" => JsOp::XorEq,
+                "|" => JsOp::BitOr,
+                "&" => JsOp::BitAnd,
+                "^" => JsOp::BitXor,
+                "&&" => JsOp::AndAnd,
+                "||" => JsOp::OrOr,
+                "<<" => JsOp::Shl,
+                ">>" => JsOp::Shr,
+                ">>>" => JsOp::Lshr,
+                "==" => JsOp::Eq,
+                "===" => JsOp::Eq,
+                "<" => JsOp::Lt,
+                "<=" => JsOp::Le,
+                "!=" => JsOp::Ne,
+                ">" => JsOp::Gt,
+                ">=" => JsOp::Ge,
+                _ => {
+                    self.add_error(&ast, "unimplemented binary op");
+                    JsOp::Add
+                }
             }
+        } else if let hyp::AstData::Local { local: hyp::Local::Builtin(builtin) } = op {
+            match builtin {
+                hyp::Builtin::Star => JsOp::Mul,
+                _ => {
+                    self.add_error(&ast, "unimplemented binary op");
+                    JsOp::Add
+                }
+            }
+        } else {
+            self.add_error(&ast, "unimplemented binary op");
+            JsOp::Add
         }
     }
 
@@ -85,13 +102,14 @@ impl JsEnc {
     pub fn parse_expr(&mut self, expr: &hyp::Ast) -> JsAst {
         
         match &expr.data {
-            hyp::AstData::Void => { JsAst::Undefined }
-            hyp::AstData::ConstNum { v } => JsAst::Lit { lit: JsLit::Int(*v) },
-            hyp::AstData::ConstFloat { v } => JsAst::Lit { lit: JsLit::Float(*v) },
+            hyp::AstData::Void | hyp::AstData::TypeDef { .. } => { JsAst::Undefined }
+            hyp::AstData::ConstLit { v: hyp::Lit::Int(v) } => JsAst::Lit { lit: JsLit::Int(*v) },
+            hyp::AstData::ConstLit { v: hyp::Lit::Float(v) } => JsAst::Lit { lit: JsLit::Float(*v) },
             hyp::AstData::ConstStr { v } => JsAst::Lit { lit: JsLit::Str(v.clone()) },
             hyp::AstData::Loop { body } => {
                 //let local_count = self.begin_scope();
-                let body_ast = body.expr.iter().map(|s| self.parse_stmt(s)).collect();
+                let body_ast = self.parse_stmts(&body.expr);
+                
                 //self.end_scope(local_count);
                 
                 JsAst::Loop {
@@ -110,23 +128,26 @@ impl JsEnc {
             }
             hyp::AstData::App {
                 fun: box hyp::Ast {
-                    data: hyp::AstData::Ident { s }, ..
+                    data, ..
                 }, params, kind: hyp::AppKind::Binary } => {
 
-                if &s[..] == ":=" {
-                    let left_ast = self.parse_expr(&params[0]);
+                match data {
+                    hyp::AstData::Ident { s } if &s[..] == ":=" => {
+                        let left_ast = self.parse_expr(&params[0]);
 
-                    self.check_assignable(&left_ast);
-                    
-                    JsAst::Assign {
-                        left: Box::new(left_ast),
-                        right: Box::new(self.parse_expr(&params[1]))
+                        self.check_assignable(&left_ast);
+                        
+                        JsAst::Assign {
+                            left: Box::new(left_ast),
+                            right: Box::new(self.parse_expr(&params[1]))
+                        }
                     }
-                } else {
-                    JsAst::Binary {
-                        left: Box::new(self.parse_expr(&params[0])),
-                        op: self.map_binop(&expr, s),
-                        right: Box::new(self.parse_expr(&params[1])),
+                    _ => {
+                        JsAst::Binary {
+                            left: Box::new(self.parse_expr(&params[0])),
+                            op: self.map_binop(&expr, data),
+                            right: Box::new(self.parse_expr(&params[1])),
+                        }
                     }
                 }
             }
@@ -184,7 +205,7 @@ impl JsEnc {
                     self.parse_pattern(&p.pat)
                 }).collect();
 
-                let body_ast = lambda.expr.iter().map(|e| self.parse_stmt(e)).collect();
+                let body_ast = self.parse_stmts(&lambda.expr);
 
                 JsAst::Lambda {
                     inputs: args,
@@ -194,7 +215,7 @@ impl JsEnc {
             hyp::AstData::If { cond, body, else_body } => {
 
                 let cond_ast = Box::new(self.parse_expr(cond));
-                let then_ast = body.expr.iter().map(|s| self.parse_stmt(s)).collect();
+                let then_ast = self.parse_stmts(&body.expr);
 
                 JsAst::If {
                     cond: cond_ast,
@@ -203,7 +224,7 @@ impl JsEnc {
                 }
             }
             hyp::AstData::For { pat, iter: (from, to), body, .. } => {
-                let body_ast = body.expr.iter().map(|s| self.parse_stmt(s)).collect();
+                let body_ast = self.parse_stmts(&body.expr);
 
                 JsAst::For {
                     pre: Box::new(JsAst::Locals {
@@ -225,7 +246,7 @@ impl JsEnc {
             hyp::AstData::Block { expr } => {
 
                 let b = JsAst::Block {
-                    stmts: expr.iter().map(|s| self.parse_stmt(s)).collect()
+                    stmts: self.parse_stmts(expr)
                 };
 
                 b
@@ -234,7 +255,7 @@ impl JsEnc {
                 JsAst::Break,
             hyp::AstData::While { cond, body } => {
                 let cond_ast = Box::new(self.parse_expr(cond));
-                let body_ast = body.expr.iter().map(|s| self.parse_stmt(s)).collect();
+                let body_ast = self.parse_stmts(&body.expr);
 
                 JsAst::While {
                     cond: cond_ast,
@@ -254,8 +275,9 @@ impl JsEnc {
                         JsAst::ModuleRef { abs_index },
                     hyp::Local::ModuleMember { abs_index, local_index } =>
                         JsAst::ModuleMember { abs_index, local_index },
-                    hyp::Local::Builtin { ref name, .. } =>
-                        JsAst::Path { path: vec![name.clone()] },
+                    hyp::Local::Builtin(_) =>
+                        panic!("builtins not implemented"),
+                        //JsAst::Path { path: vec![name.clone()] },
                     hyp::Local::Local { index, .. } =>
                         JsAst::Local { index }
                 }
@@ -375,6 +397,19 @@ impl JsEnc {
         }
     }
 
+    pub fn parse_stmts(&mut self, stmts: &[hyp::Ast]) -> Vec<JsAst> {
+        let mut items = vec![];
+
+        for stmt in stmts {
+            let ast = self.parse_stmt(stmt);
+            match ast {
+                JsAst::Undefined => {}
+                _ => items.push(ast)
+            }
+        }
+        items
+    }
+
     pub fn parse_stmt(&mut self, stmt: &hyp::Ast) -> JsAst {
         match &stmt.data {
             hyp::AstData::Use { name, rel_index } => {
@@ -395,7 +430,7 @@ impl JsEnc {
                 }).collect();
 
                 let expr = JsAst::Block {
-                    stmts: lambda.expr.iter().map(|s| self.parse_stmt(s)).collect()
+                    stmts: self.parse_stmts(&lambda.expr)
                 };
 
                 //let expr = self.parse_block(&item_fn.block);
@@ -421,7 +456,7 @@ impl JsEnc {
 
     pub fn parse_block(&mut self, block: &hyp::AstLambda) -> JsAst {
         JsAst::Block {
-            stmts: block.expr.iter().map(|s| self.parse_stmt(s)).collect()
+            stmts: self.parse_stmts(&block.expr)
         }
     }
 
@@ -535,10 +570,7 @@ impl JsEnc {
 
     pub fn parse_hyp(&mut self, input: &Vec<hyp::Ast>) {
 
-        for stmt in input {
-            let ast = self.parse_stmt(stmt);
-            self.module.items.push(ast);
-        }
+        self.module.items = self.parse_stmts(input)
 
         //bincode::serialize_into(&mut self.arr, &self.module).unwrap();
     }

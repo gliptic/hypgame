@@ -4,19 +4,6 @@ use vertex as vert
 
 @uniform pub let s: sampler2D
 
-#[=
-fn pie(p: vec2, angle: float): float {
-    angle := radians(angle) / 2.0
-    let n = vec2(cos(angle), sin(angle))
-    return abs(p).x * n.x + p.y*n.y
-}
-
-fn rotateCCW(p: vec2, a: float): vec2 {
-    let m = mat2(cos(a), sin(a), -sin(a), cos(a))
-    return p * m
-}
-=]
-
 fn hash2(co: vec2): float {
     return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453)
 }
@@ -53,7 +40,27 @@ fn starfield(dir: vec3): float {
 }
 
 pub fn sky() {
-    let rd: vec3 = normalize(vert.fsPos.xyz)
+    # TODO: Use texture coords/color for global direction
+    # so that it works the same in reflection
+    #let rd: vec3 = normalize(vert.fsPos.xyz)
+    let rd: vec3 = normalize(vec3(vert.fsPos.x, vert.fsTexcoord.y, vert.fsPos.z))
+
+    # TODO: Distort glass at edges?
+
+    let h: float = rd.y * -0.5 + 0.5
+    @inline let skycol: vec3 = vec3(starfield(rd)) +
+        mix(mix(vec3(0), vec3(0.2, 0.1, 0.43), h + 0.3),
+            vec3(0.08, 0.61, 0.83), h * 1.5 - 0.4)
+    gl_FragColor := vec4(skycol, 1)
+}
+
+pub fn sky_mirror() {
+    # TODO: Use texture coords/color for global direction
+    # so that it works the same in reflection
+    #let rd: vec3 = normalize(vert.fsPos.xyz)
+    let rd: vec3 = normalize(vec3(vert.fsPos.x, -vert.fsTexcoord.y, vert.fsPos.z))
+
+    # TODO: Distort glass at edges?
 
     let h: float = rd.y * -0.5 + 0.5
     @inline let skycol: vec3 = vec3(starfield(rd)) +
@@ -70,6 +77,14 @@ pub fn main() {
 
 pub fn translucent() {
     gl_FragColor := vec4(vert.fsColor.rgb, 0.5)
+}
+
+pub fn grid() {
+    let coord: vec2 = vert.fsTexcoord.xy * 5.0;
+    #let gr: vec2 = abs(fract(coord - 0.5) - 0.5); # / fwidth(coord);
+    let gr: vec2 = step(2.0 * abs(fract(coord - 0.5) - 0.5), vec2(0.8)); # / fwidth(coord);
+    let color: float = 1.0 - min(gr.x, gr.y);
+    gl_FragColor := vec4(color * 0.1, color, color, 1);
 }
 
 pub fn white() {

@@ -1,5 +1,5 @@
 use crate::{GlslAst, GlslModule, GlslLit, GlslType, GlslOp, GlslUnop};
-use crate::{hyp_parser as hyp, hyp_to_glsl, conflict_tree::ConflictTree};
+use crate::{hyp, hyp_to_glsl, conflict_tree::ConflictTree};
 use std::collections::{HashMap, HashSet};
 
 // TODO: Move this and NeedSemi to common place with JS version
@@ -266,7 +266,7 @@ impl<'a> GlslBundler<'a> {
                     //let id = (abs_index as u32, id_);
                     if all_used_imports.contains(&id) {
                         let local = &module.locals[id.1 as usize];
-                        println!("moving {}.{}", &module.name, &local.1);
+                        println!("moving {}.{}", &module.name, &local.name);
                         whole_ct.items.push((id, count));
                         true
                     } else {
@@ -291,8 +291,8 @@ impl<'a> GlslBundler<'a> {
                 let module = &mut module_infos[abs_index as usize];
                 let local = &mut module.locals[local_index as usize];
 
-                println!("renaming {}.{} to {} ({}.{})", &module.name, &local.1, &new_name, abs_index, local_index);
-                local.1 = new_name;
+                //println!("renaming {}.{} to {} ({}.{})", &module.name, &local.name, &new_name, abs_index, local_index);
+                local.name = new_name;
             }
             //dbg!(&whole_ct);
             locals.clear();
@@ -370,7 +370,7 @@ impl<'a> GlslBundler<'a> {
             let mut exported_functions = Vec::new();
 
             for &exported_index in &module.exports {
-                if module.locals[exported_index as usize].0.is_fn() {
+                if module.locals[exported_index as usize].ty.is_fn() {
                     let mut glsl_bundler = GlslBundler::new(module_infos, exported_index as i32, debug);
                     glsl_bundler.current_module = abs_index;
                     glsl_bundler.module_to_glsl(&converted_module);
@@ -466,7 +466,7 @@ impl<'a> GlslBundler<'a> {
         if self.exported_local < 0 {
             for (t, kind) in &globals {
                 for &(module_index, local_index) in *t {
-                    let (ty, name) = &self.module_infos[module_index].locals[local_index as usize];
+                    let hyp::LocalDef { ty, name, .. } = &self.module_infos[module_index].locals[local_index as usize];
                     //let name = &self.module_infos[module_index].locals[local_index as usize].1;
 
                     self.buf.ident(kind);
@@ -490,9 +490,9 @@ impl<'a> GlslBundler<'a> {
                     return NeedSemi::Empty;
                 }
 
-                let name = &self.module_infos[self.current_module].locals[*id as usize].1;
+                let name = &self.module_infos[self.current_module].locals[*id as usize].name;
                 
-                let fn_ty = &self.module_infos[self.current_module].locals[*id as usize].0;
+                let fn_ty = &self.module_infos[self.current_module].locals[*id as usize].ty;
                 let (ret_ty, args_ty) = match &fn_ty {
                     hyp::AstType::Fn(ret, args) => (ret, args),
                     _ => { panic!("function doesn't have function type?") }
@@ -516,7 +516,7 @@ impl<'a> GlslBundler<'a> {
                     }
                     self.buf.type_to_glsl(ty);
 
-                    let (_, name) = &self.module_infos[self.current_module].locals[*local_index as usize];
+                    let hyp::LocalDef { name, .. } = &self.module_infos[self.current_module].locals[*local_index as usize];
                     self.buf.ident(name);
                 }
                 self.buf.rparen();
@@ -623,7 +623,7 @@ impl<'a> GlslBundler<'a> {
                 //self.buf.push_str("var ");
                 for i in 0..locs.len() {
                     let id = locs[i].2;
-                    let (ty, name) = &self.module_infos[self.current_module].locals[id as usize];
+                    let hyp::LocalDef { ty, name, .. } = &self.module_infos[self.current_module].locals[id as usize];
 
                     if first || ty != &prev_ty {
 
@@ -824,13 +824,13 @@ impl<'a> GlslBundler<'a> {
                 NeedSemi::Yes
             }
             &GlslAst::LocalRef { id } => {
-                let name = &self.module_infos[self.current_module].locals[id as usize].1;
+                let name = &self.module_infos[self.current_module].locals[id as usize].name;
 
                 self.buf.ident(&self.ident_to_str(name));
                 NeedSemi::Yes
             }
             &GlslAst::ModuleMember { abs_index, local_index } => {
-                let name = &self.module_infos[abs_index as usize].locals[local_index as usize].1;
+                let name = &self.module_infos[abs_index as usize].locals[local_index as usize].name;
                 self.buf.ident(&self.ident_to_str(name));
                 NeedSemi::Yes
             }

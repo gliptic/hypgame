@@ -9,8 +9,7 @@ use std::process::{Command, Stdio};
 use std::collections::{HashMap, HashSet, VecDeque};
 use notify::{RecommendedWatcher, Watcher, RecursiveMode, Event};
 use crossbeam_channel::{unbounded, Sender, Receiver, select, RecvError};
-use rustweb_code::{hyp_parser as hyp};
-//use zip::write::ZipWriter;
+use rustweb_code::hyp;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -18,7 +17,8 @@ fn main() {
     let mut watching = HashSet::new();
 
     let (tx, rx) = unbounded();
-    let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(300)).unwrap();
+    let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_millis(50)).unwrap();
+    //let mut watcher: RecommendedWatcher = Watcher::new_immedit(tx, Duration::from_millis(300)).unwrap();
 
     'build_loop: loop {
         println!("building..");
@@ -42,6 +42,8 @@ fn main() {
             }
         }
 
+        let mut changes_seen_at: Option<Instant> = None;
+
         loop {
             select! {
                 recv(rx) -> event => {
@@ -57,13 +59,20 @@ fn main() {
                                     let write_path = canonicalize(&event.paths[0]).unwrap();
 
                                     if deps.contains(&write_path) {
-                                        continue 'build_loop;
+                                        changes_seen_at = Some(Instant::now());
                                     }
                                 }
                                 _ => {}
                             }
                         }
                         Err(_) => {
+                        }
+                    }
+                }
+                default(Duration::from_millis(100)) => {
+                    if let Some(ch) = changes_seen_at {
+                        if ch.elapsed() > Duration::from_millis(100) {
+                            continue 'build_loop;
                         }
                     }
                 }
@@ -100,7 +109,7 @@ fn parse_modules(root_in: &str, deps: &mut DepSet)
             if attr == hyp::Attr::None {
                 data.push(0);
 
-                let mut parser = hyp::Parser::new(data, path.clone());
+                let mut parser = hyp::parser::Parser::new(data, path.clone());
                 parser.next();
                 hyp_module = match parser.rlambda_module() {
                     Ok(hm) => hm,
@@ -123,6 +132,7 @@ fn parse_modules(root_in: &str, deps: &mut DepSet)
                     path: path.clone(),
                     uses: Vec::new(),
                     locals: Vec::new(),
+                    local_types: vec![],
                     exports: Vec::new(),
                     exports_rev: HashMap::new(),
                     language: hyp::Language::Binary
@@ -164,7 +174,6 @@ fn parse_modules(root_in: &str, deps: &mut DepSet)
 
 fn bundle_js(hyp_modules: HypModuleVec, debug: bool) -> String {
     use rustweb_code::{
-        hyp_resolver,
         js_bundler
     };
 
@@ -178,8 +187,15 @@ fn bundle_js(hyp_modules: HypModuleVec, debug: bool) -> String {
     }
 
     for i in 0..module_infos.len() {
-        let mut resolver = hyp_resolver::Resolver::new(i, &mut module_infos, debug);
+        let mut resolver = hyp::resolver::Resolver::new(i, &mut module_infos, debug);
         resolver.resolve(&mut module_lambdas[i]);
+
+        if resolver.errors.len() > 0 {
+            for err in &resolver.errors {
+                resolver.module_infos[i].print_line_at(err);
+            }
+            panic!("failed resolve");
+        }
     }
 
     println!("success!");
@@ -196,7 +212,6 @@ fn build(root_in: &str, js_out: &str, js_min_out: &str, zip_min_out: &str) -> Bu
     let mut deps = HashSet::new();
 
     use rustweb_code::{
-        hyp_resolver,
         hyp_to_js, hyp_to_glsl,
         js_bundler, glsl_bundler};
 

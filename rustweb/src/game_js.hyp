@@ -8,9 +8,6 @@ use editor
 #let uniNames = ["t", "P", "R"]
 
 let fs = main_glsl.main
-#let wasm_U8 = new Uint8Array(wasm.memory.buffer)
-
-#console.log(wasm.RENDER_BUF)
 
 fn genTex(pixels, ty, f) {
     let side = Math.sqrt(pixels.length)
@@ -54,7 +51,8 @@ var whiteTex
 
 fn startGame() {
     let gl, imgShader, translucentShader,
-        skyShader
+        skyShader, skyMirrorShader, gridShader,
+        fb
     let canvas = document.getElementById("g")
     #let canvas = document.getElementsByTagName("canvas")[0]
     
@@ -62,6 +60,8 @@ fn startGame() {
     gl := render.gl
 
     skyShader :=render.createShaderProgram(render.basicVs, main_glsl.sky)
+    skyMirrorShader :=render.createShaderProgram(render.basicVs, main_glsl.sky_mirror)
+    gridShader := render.createShaderProgram(render.basicVs, main_glsl.grid)
     imgShader := render.createShaderProgram(render.basicVs, fs)
     translucentShader := render.createShaderProgram(render.basicVs, main_glsl.translucent)
     
@@ -79,7 +79,7 @@ fn startGame() {
     let world = state.world_create()
 
     let keys = new {}, audio
-    let aim = [1, 0]
+    let aim = [1, 0], aimv = [1, 0]
     window.onkeydown := { |ev|
         keys[ev.keyCode] := 1
     }
@@ -94,13 +94,32 @@ fn startGame() {
             var pan = audio.createStereoPanner()
             var gain = audio.createGain()
             gain.gain.value := 0.5
-            pan.pan.value := 0.8
+            pan.pan.value := 0
 
             src.buffer := buf
             #src.playbackRate.value = 1.2;
             src.connect(gain).connect(pan).connect(audio.destination)
             src.start()
         }
+    }
+
+    fn osc_sin(value) {
+        return Math.sin(value * 6.283184)
+    }
+
+    fn osc_tri(value) {
+        var v2 = (value % 1) * 4
+        if v2 < 2 { return v2 - 1 }
+        return 3 - v2
+    }
+
+    fn osc_square(value) {
+        return if (value % 1) < 0.5 { 1 } else { -1 }
+    }
+
+    fn getnotefreq(n) {
+        # 174.61.. / 44100 = 0.003959503758 (F3)
+        return 0.003959503758 * Math.pow(2, (n - 128) / 12)
     }
 
     canvas.onclick := {
@@ -110,8 +129,82 @@ fn startGame() {
             let scriptProc = audio.createScriptProcessor(bufSize, 0, 1)
             let time = 0
             let tick = 0
-            let start = 44100 * 2
-            let beep = Array(44100 >> 2).fill(0).map({ |s, x| return 0.2 * Math.sin(220 * 2 * Math.PI * x / 44100) })
+            let start = 44100 * 4
+
+            let beep = Array(44100 * 4).fill(0);
+            let rowLen = 5513
+            let delay = ((rowLen * 6) & ~1) / 2 # Delay was originally in stereo
+            let delayAmount = 17 / 255
+            let fxFreq = 30 * 43.23529 * 3.141592 / 44100
+            let lfoFreq_ = 0
+            let lfoFreq = Math.pow(2, lfoFreq_ - 9) / rowLen
+            #let lfoAmount = 179 / 512
+            let lfoAmount = 0
+            let dist = 119 * 0.00001
+            let oscLFO = osc_tri
+            let q = 1 - 184 / 255
+            var low = 0, band = 0, high;
+            let drive = 244 / 32
+
+            let o1vol = 100, o2vol = 201
+            let o1semi = 128 - 128, o2semi = 128 - 128
+            let attack = 0*0*4
+            let sustain = 6*6*4
+            let release = 49*49*4
+            let osc2detune = 0;
+            let note = 126
+
+            for x in 0..beep.length {
+                #return 0.2 * Math.sin(220 * 2 * Math.PI * x / 44100)
+                #let y = (330 * x / 44100) % 1;
+                #let y = x % (44100 / 250);
+                #let f = (220 * y / 44100) % 1;
+                #return 0.4 * f - 0.2
+
+                #let o1 = getnotefreq(113 + 140 - 128)
+                #let o2 = getnotefreq(113) * (1 + 0.0008 * osc2detune)
+                let o1 = getnotefreq(note + o1semi)
+                let o2 = getnotefreq(note + o2semi) * (1 + 0.0008 * osc2detune)
+                let e = 1
+                if x < attack {
+                    e := x/attack
+                } else if x >= attack + sustain && x <= attack + sustain + release {
+                    e -= (x - attack - sustain) / release
+                } else {
+                    e := 0
+                }
+                let s = (e * 80 * (osc_tri(o1 * x) * o1vol + osc_tri(o2 * x) * o2vol)) | 0
+
+                let k = x * 2
+                var fxF = fxFreq
+                fxF *= oscLFO(lfoFreq * k) * lfoAmount + 0.5
+                fxF := 1.5 * Math.sin(fxF)
+                low += fxF * band
+                high := q * (s - band) - low
+                band += fxF * high
+                #s := low # 2
+                s := band  # 3
+                
+                s *= dist
+                if s < 1 {
+                    if s > -1 {
+                        s := osc_sin(s * 0.25)
+                    } else {
+                        s := -1
+                    }
+                } else {
+                    s := 1
+                }
+                s /= dist
+
+                s *= drive
+                
+                if x >= delay {
+                    s += beep[x - delay] * delayAmount
+                }
+
+                beep[x] := s / 65536
+            }
 
             let samples = []
 
@@ -158,14 +251,77 @@ fn startGame() {
     canvas.onmousemove := { |e|
         if (document.pointerLockElement == canvas) {
             let xdiff = e.movementX / 500
+            let ydiff = e.movementY / 500
             aim := vec.vrotate(aim, [Math.cos(xdiff), Math.sin(xdiff)])
+            aimv := vec.vrotate(aimv, [Math.cos(ydiff), Math.sin(ydiff)])
+            # TODO: Don't allow aimv to have X below a certain threshold (based on vertical fov)
         }
     }
 
     # editor state
     # up down left right
     # 85, 69, 65, 79
-    editor.start(world)
+    @debug editor.start(world)
+
+    fn render_map(renders, sign) {
+        
+        #render.activateShader(if sign > 0 { skyShader } else { skyMirrorShader })
+        render.activateShader(skyShader)
+
+        let height = 100
+        let step = 100
+        let bottom = sign * -height / 2 - if sign < 0 { height } else { 0 };
+        let top = sign * height / 2 - if sign < 0 { height } else { 0 };
+
+        renders.sky.forEach({ |r|
+            let x = r.from[0] * step
+            let z = r.from[1] * step
+            let x2 = r.to[0] * step
+            let z2 = r.to[1] * step
+
+            render.color(r.color)
+
+            render.wall3d(whiteTex, x, z, x2, z2, bottom, top, 0, sign * top, 1, sign * bottom)
+        })
+
+        render.flush()
+
+        # Walls
+        gl.depthMask(0) # Walls are translucent currently
+        render.activateShader(translucentShader)
+
+        renders.lines.forEach({ |r|
+            let x = r.from[0] * step
+            let z = r.from[1] * step
+            let x2 = r.to[0] * step
+            let z2 = r.to[1] * step
+
+            render.color(r.color)
+
+            render.wall3d(whiteTex, x, z, x2, z2, bottom, top, 0, 0, 1, 1)
+        })
+
+        render.flush()
+        gl.depthMask(1)
+
+        # Texts
+        render.activateShader(imgShader)
+
+        renders.portal_texts.forEach({ |r|
+            let x = r.from[0] * step
+            let z = r.from[1] * step
+            let x2 = r.to[0] * step
+            let z2 = r.to[1] * step
+
+            render.color(0xff00ff00)
+
+            let textdir = vec.vnormalize2([x2 - x, z2 - z])
+
+            render.drawText(fontBits, whiteTex, "THING", z, top, x, textdir[1], textdir[0], sign, 10/3)
+        })
+
+        render.flush()
+    }
     
     fn update() {
         window.requestAnimationFrame({ |currentTime|
@@ -184,41 +340,25 @@ fn startGame() {
                 walk := vec.vsub2(walk, vec.vmul2([aim[1], -aim[0]], walkSpeed))
             }
             
-            let renders = [], line_renders = [], sky_line_renders = []
-            state.world_update(world, new {
-                aim,
-                walk,
-                act: keys[81]
-            }, renders, line_renders, sky_line_renders, editor.paused)
+            let renders;
+            let speed = if keys[16] { 5 } else { 1 }
 
-            #console.log("rendering,", renders.length, "boxes")
-            render.canvas_w := canvas.width := window.innerWidth
-            render.canvas_h := canvas.height := window.innerHeight
-            gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
-            gl.clear(render.GL_COLOR_BUFFER_BIT)
-            #render.setView(0, 0, Math.cos(rot), Math.sin(rot), 1.0)
-            #rot += 0.01
-            render.color(0xffffffff)
-            render.setView2(aim)
-            render.activateShader(translucentShader)
-            #render.activateShader(skyShader)
-            #[=
-            let z = -2500
-            render.wall3d(pointTex, -1000, z, 1000, z, -1024, 1024,
-                0, 0, 1, 1)
-            =]
+            for i in 0..speed {
+                renders := new {
+                    lines: [],
+                    sky: [],
+                    portal_texts: []
+                }
 
-            renders.forEach({ |r|
-                let step = 100 #512 * 2
-                let z = (-r.ul[0] - 1) * step
-                let x = r.ul[1] * step
-                render.wall3d(pointTex, x + step, z, x, z, -step / 2, step / 2, 0, 0, 1, 1);
-                render.wall3d(pointTex, x, z, x, z + step, -step / 2, step / 2, 0, 0, 1, 1);
-                render.wall3d(pointTex, x + step, z + step, x + step, z, -step / 2, step / 2, 0, 0, 1, 1);
-                render.wall3d(pointTex, x, z + step, x + step, z + step, -step / 2, step / 2, 0, 0, 1, 1);
-            })
+                state.world_update(world, new {
+                    aim,
+                    walk,
+                    act: keys[81]
+                }, renders, editor.paused)
+            }
 
-            line_renders.sort({|a, b|
+            # Sort lines
+            renders.lines.sort({|a, b|
                 let len_a = a.from[0] * a.from[0] + a.from[1] * a.from[1];
                 let len_b = b.from[0] * b.from[0] + b.from[1] * b.from[1];
 
@@ -231,34 +371,85 @@ fn startGame() {
                 }
             })
 
-            line_renders.forEach({ |r|
+
+            if !fb {
+                fb := render.createFramebufferTexture(render.canvas_w, render.canvas_h)
+            } else if window.innerWidth != render.canvas_w ||
+                      window.innerHeight != render.canvas_h {
+
+                render.canvas_w := canvas.width := window.innerWidth
+                render.canvas_h := canvas.height := window.innerHeight
+                render.deleteFramebufferTexture(fb)
+                fb := render.createFramebufferTexture(render.canvas_w, render.canvas_h)
+            }
+            
+            gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
+
+            # Generate mirror
+            render.bindFramebufferTexture(fb)
+                gl.clear(render.GL_COLOR_BUFFER_BIT)
+                
+                render.color(0xffffffff)
+                render.setView2(aim, aimv)
+
+                render_map(renders, -1)
+
+            render.unbindFramebufferTexture()
+
+            gl.clear(render.GL_COLOR_BUFFER_BIT)
+
+            # Render mirror
+            ##[=
+            gl.depthMask(0)
+            render.setView2([1, 0], [1, 0])
+            render.activateShader(imgShader)
+
+            render.color(0x55ffffff)
+            #render.color(0xffffffff)
+            render.wall3d(fb.texture,
+                1.83, -1,
+                1.83, 1,
+                render.canvas_h / render.canvas_w,
+                -render.canvas_h / render.canvas_w, 0, 0, 1, 1);
+            render.flush()
+            gl.depthMask(1)
+            #=]
+
+            # Render normal
+            render.setView2(aim, aimv)
+            render_map(renders, 1)
+            
+            #render.activateShader(skyShader)
+            #[=
+            let z = -2500
+            render.wall3d(pointTex, -1000, z, 1000, z, -1024, 1024,
+                0, 0, 1, 1)
+            =]
+
+            #[=
+            renders.forEach({ |r|
                 let step = 100 #512 * 2
-                let x = r.from[0] * step
-                let z = r.from[1] * step
-                let x2 = r.to[0] * step
-                let z2 = r.to[1] * step
-
-                render.color(r.color)
-
-                render.wall3d(whiteTex, x, z, x2, z2, -step / 2, step / 2, 0, 0, 1, 1);
-                #[=
+                let z = (-r.ul[0] - 1) * step
+                let x = r.ul[1] * step
+                render.wall3d(pointTex, x + step, z, x, z, -step / 2, step / 2, 0, 0, 1, 1);
                 render.wall3d(pointTex, x, z, x, z + step, -step / 2, step / 2, 0, 0, 1, 1);
                 render.wall3d(pointTex, x + step, z + step, x + step, z, -step / 2, step / 2, 0, 0, 1, 1);
                 render.wall3d(pointTex, x, z + step, x + step, z + step, -step / 2, step / 2, 0, 0, 1, 1);
-                =]
             })
+            =]
 
-            render.flush()
+            @debug editor.draw(whiteTex, fontBits, imgShader)
 
-            editor.draw(whiteTex, fontBits, imgShader)
-
+            render.setView2([1, 0], [1, 0])
+            render.activateShader(imgShader)
             render.color(0xffffffff)
             # TODO: HUD y position needs to depend on aspect ratio :/
             let now = state.current_player_time(world)
             let second = state.TIME_IN_SECONDS - (now / state.SECOND) | 0
             let minute = (second / 60) | 0
             second %= 60;
-            render.drawText(fontBits, whiteTex, minute + " " + second, -200, 250)
+            render.drawText(fontBits, whiteTex, minute + " " + second, -200, 250, 1000, 1, 0, 1, 10/3)
+            render.drawText(fontBits, whiteTex, world.conflicts + " CONFLICTS", -200, 300, 1000, 1, 0, 1, 10/3)
 
             render.flush()
         })

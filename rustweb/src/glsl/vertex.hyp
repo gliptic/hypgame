@@ -9,7 +9,7 @@
 @varying pub let fsColor: vec4
 
 @uniform pub let ar: float
-@uniform pub let viewMat: mat2
+@uniform pub let viewMat: mat3, viewMat2: mat3
 
 #[=
 fn perspective3d(): mat4 {
@@ -33,8 +33,8 @@ pub fn main() {
     fsTexcoord := texcoord
     fsColor := color
 
-    let dir: vec2 = viewMat * pos.xz
-    @inline let v: vec4 = perspective3d * vec4(dir.x, pos.y, dir.y, 1);
+    let dir: vec3 = viewMat2 * viewMat * pos #.xz
+    @inline let v: vec4 = perspective3d * vec4(dir.xyz, 1) # vec4(dir.x, pos.y, dir.y, 1);
     #let v: vec4 = perspective3d() * vec4(pos.y, 1);
     #v.y *= ar
 

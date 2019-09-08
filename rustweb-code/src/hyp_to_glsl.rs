@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use crate::hyp_parser as hyp;
+use crate::hyp;
 use std::collections::{HashSet};
 
 //type TypedAst = (GlslAst, GlslType);
@@ -15,7 +15,7 @@ pub enum GlslLocal {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum GlslLit {
-    Int(u64),
+    Int(i64),
     //Str(String),
     Float(f64)
 }
@@ -334,8 +334,8 @@ impl GlslEnc {
     pub fn parse_expr(&mut self, expr: &hyp::Ast) -> GlslAst {
         
         match &expr.data {
-            hyp::AstData::ConstNum { v } => GlslAst::Lit { lit: GlslLit::Int(*v) },
-            hyp::AstData::ConstFloat { v } => GlslAst::Lit { lit: GlslLit::Float(*v) },
+            hyp::AstData::ConstLit { v: hyp::Lit::Int(v) } => GlslAst::Lit { lit: GlslLit::Int(*v) },
+            hyp::AstData::ConstLit { v: hyp::Lit::Float(v) } => GlslAst::Lit { lit: GlslLit::Float(*v) },
             hyp::AstData::App {
                 fun: box hyp::Ast {
                     data: hyp::AstData::Ident { s }, ..
@@ -528,8 +528,14 @@ impl GlslEnc {
                 },
             hyp::AstData::Local { local } => {
                 match *local {
-                    hyp::Local::Builtin { ref name, .. } =>
-                        GlslAst::Path { segments: vec![name.clone()] },
+                    hyp::Local::Builtin(builtin) => {
+                        let name = match builtin {
+                            hyp::Builtin::Vec2Ctor => "vec2",
+                            hyp::Builtin::Mat2Ctor => "mat2",
+                            hyp::Builtin::Star => "*",
+                        };
+                        GlslAst::Path { segments: vec![name.to_owned()] }
+                    }
                     hyp::Local::Local { index, .. } =>
                         GlslAst::LocalRef { id: index },
                     hyp::Local::ModuleMember { abs_index, local_index } => {

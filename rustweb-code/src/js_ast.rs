@@ -17,7 +17,7 @@ pub enum JsBuiltin {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum JsLit {
-    Int(u64),
+    Int(i64),
     Str(String),
     Bool(bool),
     Float(f64)
@@ -35,6 +35,9 @@ pub enum JsOp {
     SubEq,
     DivEq,
     RemEq,
+    OrEq,
+    AndEq,
+    XorEq,
     BitOr,
     BitAnd,
     BitXor,

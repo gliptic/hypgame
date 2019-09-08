@@ -1,7 +1,7 @@
 use vecmath
 use "glsl/vertex" as vertex_glsl
 
-pub let gl, canvas_w, canvas_h, viewTrans
+pub let gl, canvas_w, canvas_h, viewTrans, viewTrans2
 
 pub let GL_VERTEX_SHADER = 0x8B31,
     GL_FRAGMENT_SHADER = 0x8B30,
@@ -38,7 +38,10 @@ pub let GL_TRIANGLES = 0x0004,
     GL_NEAREST = 0x2600,
     GL_LINEAR = 0x2601,
     GL_CLAMP_TO_EDGE = 0x812F,
-    GL_COLOR_BUFFER_BIT = 0x00004000
+    GL_COLOR_BUFFER_BIT = 0x00004000,
+    GL_DEPTH_TEST = 0x0B71,
+    GL_FRAMEBUFFER = 0x8D40,
+    GL_COLOR_ATTACHMENT0 = 0x8CE0
 
 pub let basicVs = vertex_glsl.main
 
@@ -67,7 +70,8 @@ fn initGl(canvas) {
     gl := canvas.getContext("webgl")
     canvas_w := canvas.width
     canvas_h := canvas.height
-    gl.clearColor(0.3, 0.35, 0.5, 1.0)
+    #gl.clearColor(0.3, 0.35, 0.5, 1.0)
+    gl.clearColor(0, 0, 0, 1.0)
 }
 
 pub fn createBuffer(bufferType, size, usage) {
@@ -88,35 +92,80 @@ pub fn createTexture(image, side, ty) {
     return texture
 }
 
+pub fn createFramebufferTexture(w, h) {
+    let texture = gl.createTexture()
+    gl.bindTexture(GL_TEXTURE_2D, texture)
+    gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+    gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    let ty = GL_RGBA
+    gl.texImage2D(GL_TEXTURE_2D, 0, ty, w, h, 0, ty, GL_UNSIGNED_BYTE, null)
+    checkErr()
+    @debug console.log(texture)
+
+    let fb = gl.createFramebuffer()
+    gl.bindFramebuffer(GL_FRAMEBUFFER, fb)
+    checkErr()
+    gl.framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0)
+    checkErr()
+    @debug console.log(fb)
+    fb.texture := texture
+    return fb
+}
+
+pub fn deleteFramebufferTexture(fb) {
+    gl.deleteTexture(fb.texture)
+    gl.deleteFramebuffer(fb)
+}
+
+pub fn bindFramebufferTexture(fb) {
+    gl.bindFramebuffer(GL_FRAMEBUFFER, fb)
+}
+
+pub fn unbindFramebufferTexture() {
+    gl.bindFramebuffer(GL_FRAMEBUFFER, null)
+}
+
 pub fn setViewTransform(shader) {
     #gl.uniformMatrix3fv(gl.getUniformLocation(shader, "m"), 0, viewTrans)
     gl.uniform1f(gl.getUniformLocation(shader, vertex_glsl.ar), canvas_w / canvas_h)
-    gl.uniformMatrix2fv(gl.getUniformLocation(shader, vertex_glsl.viewMat),
+    gl.uniformMatrix3fv(gl.getUniformLocation(shader, vertex_glsl.viewMat),
         0,
         viewTrans)
+
+    gl.uniformMatrix3fv(gl.getUniformLocation(shader, vertex_glsl.viewMat2),
+        0,
+        viewTrans2)
 }
 
 pub fn color(c) {
     col := c
 }
 
-pub fn setView2([aimx, aimy]) {
+pub fn setView2([aimx, aimy], [aimvx, aimvy]) {
+
+
+    # TODO: Transform Y and Z with aimv
     #[=
-    let z = -r.from[0] * step
-    let x = r.from[1] * step
-    [ 0 -1
-      1  0
-    ]
-
-    viewTrans := [
-        aimx, -aimy,
-        aimy, aimx
-    ]
+        [1, 0] should be identity
+        
+        [
+            1,   0,   0,
+            0,   aimvx, aimvy
+            0,   -aimvy,  aimvx
+        ]
     =]
-
     viewTrans := [
-        -aimy, -aimx,
-        aimx,  -aimy ]
+        -aimy, 0, -aimx,
+        0,     1,     0,
+        aimx,  0, -aimy ]
+
+    viewTrans2 := [
+        1,   0,   0,
+        0,   aimvx, aimvy
+        0,   -aimvy,  aimvx
+    ]
+
 }
 
 pub fn setView(x, y, rotx, roty, zoom) {
@@ -232,6 +281,7 @@ pub fn init(canvas) {
     #gl.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
     gl.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     gl.enable(GL_BLEND)
+    gl.enable(GL_DEPTH_TEST)
 
     gl.getExtension("OES_standard_derivatives")
     
@@ -244,7 +294,7 @@ pub fn init(canvas) {
     gl.activeTexture(GL_TEXTURE0)
 }
 
-pub fn drawText(fontBits, whiteTex, text, x, y) {
+pub fn drawText(fontBits, whiteTex, text, x, y, z, dirx, dirz, diry, scale) {
     for i in 0..(text.length) {
         let ch = text.charCodeAt(i);
 
@@ -255,34 +305,26 @@ pub fn drawText(fontBits, whiteTex, text, x, y) {
             id := ch - 65 + 10
         }
 
-        var scale = 1;
-
-        var step = 10 * scale / 3;
-        for dx in 0..3 {
-            for dy in 0..5 {
-                let pos = (4 - dy) * 36 * 3 + id * 3 + dx
+        var step = scale;
+        for column in 0..3 {
+            for row in 0..5 {
+                let pos = (4 - row) * 36 * 3 + id * 3 + column
                 if ((fontBits[pos >> 3] >> (pos & 7)) & 1) {
 
-                    var z = 1000
-                    #[=
-                    render.wall3d(whiteTex,
-                        x + step * dx, z,
-                        x + step * (dx + 1), z,
-                        dy * step, (dy + 1) * step,
-                        0, 0, 1, 1)
-                    =]
+                    let abs_column = i * 4 + column
 
                     wall3d(whiteTex,
-                            z, x + step*dx,
-                            z, x + step*dx + step,
-                            y + dy * step,
-                            y + dy * step - step,
+                            z + dirz*step*abs_column, x + dirx*step*abs_column,
+                            z + dirz*step*(abs_column + 1), x + dirx*step*(abs_column + 1),
+                            y + diry*(row + 1)*step,
+                            y + diry*row*step,
                             0, 0, 1, 1);
                 }
             }
         }
+        
+        #x += 12 * scale
 
-        x += 12 * scale
         #[=
         } else {
             x += 5;
