@@ -1,0 +1,16 @@
+@language(glsl)
+
+use "../../glsl/vertex" as vert
+
+@uniform pub let s: sampler2D
+@uniform pub let time: float
+
+pub fn main() {
+    gl_FragColor := texture2D(s, vert.fsTexcoord)*vert.fsColor
+    #gl_FragColor := vec4(vert.fsTexcoord.xy, 0, 1) #*vert.fsColor
+    #gl_FragColor := vec4(1,1,1,1)
+}
+
+pub fn translucent() {
+    gl_FragColor := vec4(vert.fsColor.rgb, 0.5)
+}

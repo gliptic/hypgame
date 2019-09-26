@@ -23,6 +23,18 @@ impl JsEnc {
         enc
     }
 
+    pub fn new_math_module() -> (hyp::AstLambda, hyp::ModuleInfo) {
+
+        let mut exports = vec![];
+        let mut locals = vec![];
+
+        hyp::ModuleInfo::from_externals(
+            "Math".to_owned(),
+            locals,
+            exports,
+            hyp::Language::Js)
+    }
+
     pub fn add_error(&mut self, ast: &hyp::Ast, s: &'static str) {
         self.errors.push(hyp::ParseError(ast.loc, s));
     }
@@ -114,6 +126,24 @@ impl JsEnc {
                 
                 JsAst::Loop {
                     body: body_ast
+                }
+            }
+            hyp::AstData::App {
+                fun: box hyp::Ast {
+                    data: hyp::AstData::Ident { s }, ..
+                }, params, .. } if &s[..] == "for_in" => {
+
+                if let hyp::AstData::Lambda { lambda: l } = &params[1].data {
+                    let body_ast = self.parse_stmts(&l.expr);
+
+                    JsAst::ForIn {
+                        obj: Box::new(self.parse_expr(&params[0])),
+                        var: l.param_locals[0],
+                        body: body_ast
+                    }
+                } else {
+                    self.add_error(&expr, "invalid for-in statement");
+                    JsAst::Undefined
                 }
             }
             hyp::AstData::App {

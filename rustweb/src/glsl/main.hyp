@@ -3,6 +3,7 @@
 use vertex as vert
 
 @uniform pub let s: sampler2D
+@uniform pub let time: float
 
 fn hash2(co: vec2): float {
     return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453)
@@ -18,7 +19,6 @@ fn starplane(dir: vec3): float {
     basePos := floor(basePos)
     if hash2(basePos.xy * screenscale) > 0.997 {
         let r: float = hash2(basePos.xy * 0.5)
-        let time = 0.0 # TODO
         color += r * (0.3 * sin(time * 5.0 * (r * 5.0) + r) + 0.7) * 1.5
     }
 
@@ -39,18 +39,62 @@ fn starfield(dir: vec3): float {
     return starbox(dir) + starbox(rotation(45.0 * deg, 45.0 * deg) * dir)
 }
 
+fn noise3(p: vec2): float {
+	return sin(p.x)*sin(p.y)
+}
+
+fn fbm4(p: vec2): float {
+    var f: float = 0.0
+    let m: mat2 = mat2(
+        0.80, 0.60,
+        -0.60, 0.80)
+
+    f += 0.5000*noise3(p); p := m*p*2.02
+    f += 0.2500*noise3(p); p := m*p*2.03
+    f += 0.1250*noise3(p); p := m*p*2.01
+    f += 0.0625*noise3(p)
+    return f/0.9375
+}
+
+fn planet_pattern(p: vec2, t: float): float {
+    #return fbm4(p.xz);
+    
+    let q: vec2 = vec2( fbm4( p ),
+                   fbm4( p + vec2(5.2,1.3) ) );
+
+    let r: vec2 = vec2( fbm4( p + 4.0*q + vec2(1.7,9.2) ),
+                   fbm4( p + 4.0*q + vec2(8.3,2.8) ) );
+
+    return fbm4(p + 4.0*r + t)
+}
+
 pub fn sky() {
     # TODO: Use texture coords/color for global direction
     # so that it works the same in reflection
     #let rd: vec3 = normalize(vert.fsPos.xyz)
     let rd: vec3 = normalize(vec3(vert.fsPos.x, vert.fsTexcoord.y, vert.fsPos.z))
-
+    let center: vec3 = vec3(0, 1000, 0)
+    let radius: float = 900.0*900.0
     # TODO: Distort glass at edges?
 
     let h: float = rd.y * -0.5 + 0.5
-    @inline let skycol: vec3 = vec3(starfield(rd)) +
+    let skycol: vec3 = vec3(starfield(rd)) +
         mix(mix(vec3(0), vec3(0.2, 0.1, 0.43), h + 0.3),
             vec3(0.08, 0.61, 0.83), h * 1.5 - 0.4)
+
+    let b: float = dot(rd, center)
+    let c: float = dot(center, center) - radius
+    let d: float = b*b - c
+
+    if (d > 0.0) {
+        let t: float = -sqrt(d) - b;
+        if (t > 0.0) {
+            let intersection: vec3 = rd * t;
+            #let time = 0.0
+            skycol := vec3(0.1, 0.2, 0.4) + vec3(0.0, 0.1, 0.4) * planet_pattern(intersection.xz * 0.05, time)
+        }
+    }
+    
     gl_FragColor := vec4(skycol, 1)
 }
 

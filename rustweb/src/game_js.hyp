@@ -37,7 +37,7 @@ fn genTex(pixels, ty, f) {
 fn clamp(x, min, max) {
     if x <= min {
         return min
-    } else if x >= max {
+    } elseif x >= max {
         return max
     } else {
         return x
@@ -47,7 +47,7 @@ fn clamp(x, min, max) {
 # TODO: Put in binary section
 let fontBits = atob("1tb7v+b97tm0mua3bd+RTdi2aZKKzd+2UduWlfRd/5f+v7j8XS+1l1SFZFO2adKqTd98VPUq08c9X+c97tW3ijtZrQ4=").
     split("").
-    map({ |x| return x.charCodeAt(0) })
+    map\x { return x.charCodeAt(0) }
 var whiteTex
 
 fn startGame() {
@@ -80,17 +80,17 @@ fn startGame() {
     let world = state.world_create()
 
     let keys = new {}, audio
-    let aim = [1, 0], aimv = [1, 0]
-    window.onkeydown := { |ev|
+    let aim = [0, 1], aimv = [1, 0]
+    window.onkeydown := \ev {
         keys[ev.keyCode] := 1
     }
 
-    window.onkeyup := { |ev|
+    window.onkeyup := \ev {
         keys[ev.keyCode] := 0
     }
 
     fn play2(buf) {
-        if (audio) {
+        if audio {
             var src = audio.createBufferSource()
             var pan = audio.createStereoPanner()
             var gain = audio.createGain()
@@ -124,7 +124,7 @@ fn startGame() {
     }
 
     canvas.onclick := {
-        if (!audio) {
+        if !audio {
             audio := new AudioContext()
             var bufSize = 16384
             let scriptProc = audio.createScriptProcessor(bufSize, 0, 2)
@@ -155,7 +155,7 @@ fn startGame() {
             let osc2detune = 0;
             let note = 126
 
-            for x in 0..beep.length {
+            for (0..beep.length) \x {
                 #return 0.2 * Math.sin(220 * 2 * Math.PI * x / 44100)
                 #let y = (330 * x / 44100) % 1;
                 #let y = x % (44100 / 250);
@@ -169,7 +169,7 @@ fn startGame() {
                 let e = 1
                 if x < attack {
                     e := x/attack
-                } else if x >= attack + sustain && x <= attack + sustain + release {
+                } elseif x >= attack + sustain && x <= attack + sustain + release {
                     e -= (x - attack - sustain) / release
                 } else {
                     e := 0
@@ -219,7 +219,7 @@ fn startGame() {
             synth.generate()
 
             let t = 0
-            scriptProc.onaudioprocess := { |e|
+            scriptProc.onaudioprocess := \e {
                 let left = e.outputBuffer.getChannelData(0)
                 let right = e.outputBuffer.getChannelData(1)
                 synth.getDataTyped(tick, bufSize, left, right)
@@ -238,8 +238,8 @@ fn startGame() {
         canvas.requestPointerLock()
     }
 
-    canvas.onmousemove := { |e|
-        if (document.pointerLockElement == canvas) {
+    canvas.onmousemove := \e {
+        if document.pointerLockElement == canvas {
             let xdiff = e.movementX / 500
             let ydiff = e.movementY / 500
             aim := vec.vrotate(aim, [Math.cos(xdiff), Math.sin(xdiff)])
@@ -263,7 +263,9 @@ fn startGame() {
         let bottom = sign * -height / 2 - if sign < 0 { height } else { 0 };
         let top = sign * height / 2 - if sign < 0 { height } else { 0 };
 
-        renders.sky.forEach({ |r|
+        gl.uniform1f(gl.getUniformLocation(skyShader, main_glsl.time), render.time)
+
+        renders.sky.forEach\r {
             let x = r.fromx * step
             let z = r.fromy * step
             let x2 = r.tox * step
@@ -272,7 +274,7 @@ fn startGame() {
             render.color(r.color)
 
             render.wall3d(whiteTex, x, z, x2, z2, bottom, top, 0, sign * top, 1, sign * bottom)
-        })
+        }
 
         render.flush()
 
@@ -283,7 +285,7 @@ fn startGame() {
         render.color(0xff00ff00)
         render.prism(whiteTex, 5.5 * step, 0, bottom, 0.2 * step, 0.2 * step, (top - bottom) / 2)
 
-        renders.lines.forEach({ |r|
+        renders.lines.forEach\r {
             let x = r.fromx * step
             let z = r.fromy * step
             let x2 = r.tox * step
@@ -292,7 +294,14 @@ fn startGame() {
             render.color(r.color)
 
             render.wall3d(whiteTex, x, z, x2, z2, bottom, top, 0, 0, 1, 1)
-        })
+        }
+
+        renders.objects.forEach\r {
+            let x = r.x * step
+            let z = r.y * step
+            render.color(r.color)
+            render.prism(whiteTex, x, z, bottom, 0.2 * step, 0.2 * step, (top - bottom) / 2)
+        }
 
         render.flush()
         gl.depthMask(1)
@@ -300,7 +309,7 @@ fn startGame() {
         # Texts
         render.activateShader(imgShader)
 
-        renders.portal_texts.forEach({ |r|
+        renders.portal_texts.forEach\r {
             let x = r.fromx * step
             let z = r.fromy * step
             let x2 = r.tox * step
@@ -310,8 +319,20 @@ fn startGame() {
 
             let textdir = vec.vnormalize2([x2 - x, z2 - z])
 
-            render.drawText(fontBits, whiteTex, r.text || "THING", z, top, x, textdir[1], textdir[0], sign, 10/3)
-        })
+            #let second = state.TIME_IN_SECONDS - (now / state.SECOND) | 0
+            let time_at = state.TIME_IN_SECONDS - (state.time_in_state(world, r.s) / state.SECOND) | 0
+            let a = time_at % 10
+            time_at := (time_at / 10) | 0
+            let b = time_at % 6
+            time_at := (time_at / 6) | 0
+            let c = time_at % 10
+            time_at := (time_at / 10) | 0
+            let d = time_at % 10
+
+            let time_text = String.fromCharCode(d + 48, c + 48, 58, b + 48, a + 48)
+
+            render.drawText(fontBits, whiteTex, r.text || time_text, z, top, x, textdir[1], textdir[0], sign, 10/3)
+        }
 
         render.flush()
     }
@@ -319,35 +340,39 @@ fn startGame() {
     var nextFrame = 0;
     
     fn update() {
-        window.requestAnimationFrame({ |currentTime|
+        window.requestAnimationFrame\currentTime {
             update()
+            render.time += 1/60
             #let walkSpeed = 0.1;
             var walk = [0, 0]
-            if (keys[71]) {
+            if keys[71] {
                 walk := vec.vadd2(walk, aim)
-            } else if (keys[83]) {
+            } elseif keys[83] {
                 walk := vec.vsub2(walk, aim)
             }
 
-            if (keys[68]) {
+            if keys[68] {
                 walk := vec.vadd2(walk, [aim[1], -aim[0]])
-            } else if (keys[84]) {
+            } elseif keys[84] {
                 walk := vec.vsub2(walk, [aim[1], -aim[0]])
             }
             
-            if currentTime < nextFrame {
-                return
+            if false {
+                if currentTime < nextFrame {
+                    return
+                }
+                nextFrame := currentTime + 16.6
             }
-            nextFrame := currentTime + 16.6
 
             let renders;
             let speed = if keys[16] { 5 } else { 1 }
 
-            for i in 0..speed {
+            for (0..speed) \i {
                 renders := new {
                     lines: [],
                     sky: [],
-                    portal_texts: []
+                    portal_texts: [],
+                    objects: []
                 }
 
                 state.world_update(world, new {
@@ -358,26 +383,28 @@ fn startGame() {
             }
 
             # Sort lines
-            renders.lines.sort({|a, b|
-                let len_a = a.fromx * a.fromx + a.fromy * a.fromy;
-                let len_b = b.fromx * b.fromx + b.fromy * b.fromy;
+            #[=
+            renders.lines.sort\a, b {
+                let len_a = a.fromx * a.fromx + a.fromy * a.fromy
+                let len_b = b.fromx * b.fromx + b.fromy * b.fromy
 
                 if len_a < len_b {
                     return -1
-                } else if len_a == len_b {
+                } elseif len_a == len_b {
                     return 0
                 } else {
                     return 1
                 }
-            })
-
+            }
+            =]
+            renders.lines.reverse()
 
             if !fb {
                 render.canvas_w := canvas.width := window.innerWidth
                 render.canvas_h := canvas.height := window.innerHeight
                 fb := render.createFramebufferTexture(render.canvas_w, render.canvas_h)
-            } else if window.innerWidth != render.canvas_w ||
-                      window.innerHeight != render.canvas_h {
+            } elseif (window.innerWidth != render.canvas_w ||
+                       window.innerHeight != render.canvas_h) {
 
                 render.canvas_w := canvas.width := window.innerWidth
                 render.canvas_h := canvas.height := window.innerHeight
@@ -393,6 +420,7 @@ fn startGame() {
                 
                 render.color(0xffffffff)
                 render.setView2(aim, aimv)
+                #render.setView2([aim[1], aim[0]], aimv)
 
                 render_map(renders, -1)
 
@@ -419,6 +447,7 @@ fn startGame() {
 
             # Render normal
             render.setView2(aim, aimv)
+            #render.setView2([aim[1], aim[0]], aimv)
             render_map(renders, 1)
             
             #render.activateShader(skyShader)
@@ -429,7 +458,7 @@ fn startGame() {
             =]
 
             #[=
-            renders.forEach({ |r|
+            renders.forEach\r {
                 let step = 100 #512 * 2
                 let z = (-r.ul[0] - 1) * step
                 let x = r.ul[1] * step
@@ -437,7 +466,7 @@ fn startGame() {
                 render.wall3d(pointTex, x, z, x, z + step, -step / 2, step / 2, 0, 0, 1, 1);
                 render.wall3d(pointTex, x + step, z + step, x + step, z, -step / 2, step / 2, 0, 0, 1, 1);
                 render.wall3d(pointTex, x, z + step, x + step, z + step, -step / 2, step / 2, 0, 0, 1, 1);
-            })
+            }
             =]
 
             @debug editor.draw(whiteTex, fontBits, imgShader)
@@ -468,12 +497,12 @@ fn startGame() {
             render.drawText(fontBits, whiteTex, world.conflicts + " CONFLICTS", -200, 300, 1000, 1, 0, 1, 10/3)
 
             render.flush()
-        })
+        }
     }
 
     update()
 }
 
-window.onload := { ||
+window.onload := \ {
     startGame()
 }

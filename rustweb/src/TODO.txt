@@ -6,6 +6,8 @@
 * Game is slow in Edge. Sweep is really slow. How to improve?
     * Add counters to things and see if anything sticks out
     * Test compiled js too, closure compiler might fix the worst problems
+        * Better, but not great
+    * Try extracted sweep to try to tune it
 * Flatten origin, dir, pos_diff in sweep5
 * Turn player_states into array, easier to iterate
 * Flatten pos/aim in player_state

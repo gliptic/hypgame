@@ -20,10 +20,11 @@ pub struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    pub fn new(
+    pub fn new<'b>(
         current_module: usize,
         module_infos: &'a mut Vec<ModuleInfo>,
-        debug: bool) -> Resolver {
+        external_modules: &'b [usize],
+        debug: bool) -> Resolver<'a> {
 
         let mut res = Resolver {
             scope_locals: HashMap::new(),
@@ -37,19 +38,43 @@ impl<'a> Resolver<'a> {
             errors: Vec::new()
         };
 
+        let no_span = Span(0, 0);
+
+        for &m in external_modules {
+            res.import(m);
+        }
+
         match res.module_infos[current_module].language {
             Language::Js => {
-                res.add_local("*".to_owned(), Local::Builtin(Builtin::Star), Span(0, 0));
+                res.add_local("*".to_owned(), Local::Builtin(Builtin::Star), no_span);
             },
             Language::Glsl => {
-                res.add_local("vec2".to_owned(), Local::Builtin(Builtin::Vec2Ctor), Span(0, 0));
-                res.add_local("mat2".to_owned(), Local::Builtin(Builtin::Mat2Ctor), Span(0, 0));
+                res.add_local("vec2".to_owned(), Local::Builtin(Builtin::Vec2Ctor), no_span);
+                res.add_local("mat2".to_owned(), Local::Builtin(Builtin::Mat2Ctor), no_span);
             }
             Language::Binary => {}
         }
 
         res
     }
+
+    pub fn import(&mut self, module_index: usize) {
+        let m = &self.module_infos[module_index];
+        let name = m.name.clone();
+        self.add_local(name, Local::ModuleRef { abs_index: module_index as u32 }, Span(0, 0));
+    }
+
+/*
+    pub fn import_all(&mut self, module_index: usize) {
+        let m = &self.module_infos[module_index];
+        for &export in &m.exports {
+            self.add_local(m.locals[export as usize].name.clone(), Local::ModuleMember {
+                abs_index: module_index as u32,
+                local_index: export
+            }, Span(0, 0));
+        }
+    }
+*/
 
     pub fn add_error(&mut self, ast: &Ast, s: &'static str) {
         self.errors.push(ParseError(ast.loc, s));
@@ -270,11 +295,12 @@ impl<'a> Resolver<'a> {
                 self.resolve_lambda(body, ast.loc);
                 self.end_scope(local_count);
             }
-            AstData::For { name, pat, body, iter: (from, to), .. } => {
+            AstData::For { pat, body, iter: (from, to), .. } => {
                 let local_count = self.begin_scope();
                 self.resolve_ast(from);
                 self.resolve_ast(to);
-                self.add_local(name.clone(), Local::Local { index: *pat, inline: None }, ast.loc);
+                let name = self.module_infos[self.current_module].locals[*pat as usize].name.clone();
+                self.add_local(name, Local::Local { index: *pat, inline: None }, ast.loc);
                 self.resolve_lambda(body, ast.loc);
                 self.end_scope(local_count);
             }

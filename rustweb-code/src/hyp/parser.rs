@@ -54,6 +54,7 @@ const TT_BREAK: u16 = 34;
 const TT_IN: u16 = 35;
 const TT_DOUBLEDOT: u16 = 36;
 const TT_TYPE: u16 = 37;
+const TT_ELSEIF: u16 = 38;
 const TT_EOF: u16 = 254;
 const TT_INVALID: u16 = 255;
 
@@ -112,7 +113,7 @@ impl Parser {
             (b'_', LEX_INNER_IDENT),
             (b' ', LEX_WHITESPACE),
             (b'\t', LEX_WHITESPACE),
-            (b'\\', LEX_WHITESPACE),
+            //(b'\\', LEX_WHITESPACE),
             (b'\r', LEX_WHITESPACE | LEX_NEWLINE),
             (b'\n', LEX_WHITESPACE | LEX_NEWLINE),
             (b'#', LEX_WHITESPACE),
@@ -125,6 +126,7 @@ impl Parser {
             (b']', ltab_pair(LEX_SINGLE_CHAR, TT_RBRACKET)),
             (b',', ltab_pair(LEX_SINGLE_CHAR, TT_COMMA)),
             (b';', ltab_pair(LEX_SINGLE_CHAR, TT_SEMICOLON)),
+            (b'\\', ltab_pair(LEX_SINGLE_CHAR, TT_BACKSLASH)),
             //(b'.', ltab_pair(LEX_SINGLE_CHAR, TT_DOT)),
             //(b'?', ltab_pair(LEX_SINGLE_CHAR, TT_QUESTIONMARK)),
             (b':', ltab_pair(LEX_OP, 0)),
@@ -210,6 +212,7 @@ impl Parser {
                 b"while" => TT_WHILE,
                 b"loop" => TT_LOOP,
                 b"for" => TT_FOR,
+                b"elseif" => TT_ELSEIF,
                 b"in" => TT_IN,
                 b"return" => TT_RETURN,
                 b"if" => TT_IF,
@@ -564,17 +567,23 @@ impl Parser {
     }
 
     pub fn rlambda_block_del(&mut self) -> ParseResult<AstLambda> {
-        self.check(TT_LBRACE)?;
-
         let mut params = Vec::new();
         let mut locals = Vec::new();
-        
+
+        if self.test(TT_BACKSLASH) {
+            if self.tt != TT_LBRACE {
+                self.rparameters(&mut params, &mut locals)?;
+            }
+        }
+        self.check(TT_LBRACE)?;
+
+        /*
         if self.test_double_bar() {
             // Do nothing. Why support this?
         } else if self.test_bar() {
-            self.rparameters(&mut params, &mut locals)?;
+            
             self.check_bar()?;
-        }
+        }*/
 
         let mut lambda = self.new_lambda(params, locals, AstType::Any);
         self.rlambda(&mut lambda, TT_RBRACE)?;
@@ -652,7 +661,7 @@ impl Parser {
                 self.peek_check(TT_RPAREN)?;
                 v
             }
-            TT_LBRACE => {
+            TT_LBRACE | TT_BACKSLASH => {
                 let lambda = self.rlambda_block_del()?;
                 self.ast_anyty(AstData::Lambda { lambda })
             }
@@ -709,6 +718,17 @@ impl Parser {
                 self.check(TT_RBRACKET)?;
             }
 
+            if self.tt == TT_BACKSLASH {
+                let lambda = self.rlambda_block_del()?;
+                self.next();
+                if let AstData::App { params, .. } = &mut r.data {
+                    params.push(self.ast_anyty(AstData::Lambda { lambda }));
+                } else {
+                    let mut params = vec![self.ast_anyty(AstData::Lambda { lambda })];
+                    r = self.new_app(Box::new(r), params, AppKind::Normal);
+                }
+            }
+
             /* TODO:
             while (this.tt === Token.LBracket || this.tt === Token.LBrace || this.tt === Token.Backslash) {
                 if (this.test(Token.Backslash)) {
@@ -725,7 +745,7 @@ impl Parser {
             }
             */
 
-            if self.tt != TT_DOT && self.tt != TT_LBRACKET && self.tt != TT_LPAREN {
+            if self.tt != TT_DOT && self.tt != TT_LBRACKET && self.tt != TT_LPAREN && self.tt != TT_BACKSLASH {
                 break;
             }
         }
@@ -741,53 +761,59 @@ impl Parser {
             let rhs = self.rsimple_expr()?;
             Ok(self.new_app(Box::new(op), vec![rhs], AppKind::Unary))
         } else if self.test(TT_IF) {
+            //self.check(TT_LPAREN)?;
             let cond = self.rexpr()?;
+            //self.check(TT_RPAREN)?;
             let body = self.rlambda_block_del()?;
             self.next();
             let else_body;
-            if self.test(TT_ELSE) {
-                if self.tt == TT_IF {
+            //if self.test(TT_ELSE) {
+            //if self.test(TT_DOT) {
+            if self.tt == TT_ELSE || self.tt == TT_ELSEIF {
+
+                if self.tt == TT_ELSEIF {
+                    self.tt = TT_IF; // TODO: Massive hack
                     else_body = Some(Box::new(self.rsimple_expr()?));
-                } else {
+                } else if self.test(TT_ELSE) {
                     let else_lambda = self.rlambda_block_del()?;
                     self.next();
                     else_body = Some(Box::new(
                         self.ast_anyty(AstData::Block { expr: else_lambda.expr })));
+                } else {
+                    return Err(ParseError(self.span(), "expected else or elseif"));
                 }
             } else {
                 else_body = None;
             }
             Ok(self.ast_anyty(AstData::If { cond: Box::new(cond), body, else_body }))
         } else if self.test(TT_WHILE) {
+            //self.check(TT_LPAREN)?;
             let cond = self.rexpr()?;
+            //self.check(TT_RPAREN)?;
             let body = self.rlambda_block_del()?;
             self.next();
             
             Ok(self.ast_anyty(AstData::While { cond: Box::new(cond), body }))
         } else if self.test(TT_FOR) {
-            //let mut locals = vec![];
-            //let pat = self.rpattern(&mut locals, AstType::Any)?;
-            let name = self.check_ident()?;
-            let local_index = self.new_local(
-                        name.clone(),
-                        AstType::Any,
-                        true); // TODO: Immutable let?
-
-            self.check(TT_IN)?;
-
+            self.check(TT_LPAREN)?;
             let from = self.rexpr()?;
-            //self.next();
             self.check(TT_DOUBLEDOT)?;
-            //self.check(TT_DOT)?;
-            //self.check(TT_DOT)?;
             let to = self.rexpr()?;
-            //self.next();
-            //r = self.ast_anyty(AstData::Range { from: Box::new(r), to: Box::new(member) });
-            //let iter = self.rexpr()?;
-            let body = self.rlambda_block_del()?;
+            self.check(TT_RPAREN)?;
+
+            let mut body = self.rlambda_block_del()?;
             self.next();
+
+            if body.param_locals.len() != 1
+            || body.params.len() != 1 {
+                return Err(ParseError(self.span(), "expected a single parameter"));
+            }
+
+            let _pat = body.params.remove(0);
+            let local_index = body.param_locals.remove(0);
+
             Ok(self.ast_anyty(AstData::For {
-                name: name,
+                //name: name,
                 pat: local_index,
                 iter: (Box::new(from), Box::new(to)),
                 body
@@ -913,6 +939,7 @@ impl Parser {
         self.locals.push(LocalDef {
             ty, name, is_mut,
             const_value: None,
+            need_qualification: false
         });
         index as u32
     }

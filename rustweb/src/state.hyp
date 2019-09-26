@@ -18,12 +18,14 @@ pub let CLOAK_TIME = SECOND * 30, RESET_TIMER = SECOND * 5
 
 # TEMP
 var wall_render = 0, cell_render = 0, ray_steps = 0
+var wall_tests = 0, allocs = 0
 
 @debug console.log("INTERVAL", INTERVAL)
 @debug console.log("STATES", STATES)
 @debug console.log("FRAMES", FRAMES)
 
-pub let WALL_FLOOR = 1,
+pub let WALL_UNKNOWN = 0,
+    WALL_FLOOR = 1,
     WALL_BLOCK0 = 2,
     WALL_BLOCK_MAX = WALL_BLOCK0 + 8,
     WALL_TELEPORT0 = WALL_BLOCK_MAX,
@@ -42,11 +44,11 @@ pub let WALL_FLOOR = 1,
 @debug console.log("WALL_WINDOW", WALL_WINDOW)
 
 pub let CELL_FLOOR = 1,
-        CELL_PLAYER = 2,
         CELL_EXIT = 3, # TODO: Bring to next level
         CELL_KEY0 = 4,
         CELL_KEY_MAX = CELL_KEY0 + 5,
-        CELL_CLOAK = CELL_KEY_MAX
+        CELL_CLOAK = CELL_KEY_MAX,
+        CELL_PLAYER = 0x80   # This is a special pattern only for observed_map
 
 pub let ACTION_CHANGE = 0,
     ACTION_MOVE = 1
@@ -113,7 +115,7 @@ pub fn set_observed_wall(world, time, x, y, wall_dir, what) {
     let prev = world.observed_map[index]
     if what == 0 {
         return prev
-    } else if prev && prev != what {
+    } elseif prev && prev != what {
         if prev != WALL_CONFLICT {
             world.conflicts += 1
             world.observed_map[index] := WALL_CONFLICT
@@ -135,7 +137,7 @@ pub fn set_observed_cell(world, time, x, y, what) {
     let prev = world.observed_map[index]
     if what == 0 {
         return prev
-    } else if prev && prev != what {
+    } elseif prev && prev != what {
         if prev != WALL_CONFLICT {
             world.conflicts += 1
             world.observed_map[index] := WALL_CONFLICT
@@ -168,6 +170,18 @@ pub fn get_wall_(map, x, y, wall_dir) {
     return map[((y<<W_SHIFT) | x) + MAP_SECTION_SIZE + MAP_SECTION_SIZE*wall_dir]
 }
 
+pub fn get_wall_mirror_(map, x, y, wall_dir) {
+    return map[((x<<W_SHIFT) | y) + MAP_SECTION_SIZE + MAP_SECTION_SIZE*(!wall_dir)]
+}
+
+pub fn get_wall_mirrorable_(map, x, y, wall_dir, mirror) {
+    if mirror {
+        return map[((x<<W_SHIFT) | y) + MAP_SECTION_SIZE + MAP_SECTION_SIZE*(!wall_dir)]
+    } else {
+        return map[((y<<W_SHIFT) | x) + MAP_SECTION_SIZE + MAP_SECTION_SIZE*wall_dir]
+    }
+}
+
 fn loc_from_coords([x, y]) {
     return (y<<W_SHIFT) | x
 }
@@ -195,7 +209,7 @@ fn get_wall_loc(map, loc, wall_dir) {
 pub fn state_create() {
     let self = new {
         map: map_create(),
-        visual: map_create(),
+        #visual: map_create(),
         options: new {},
         prev_switches: 0,
         switches: 0,
@@ -204,13 +218,13 @@ pub fn state_create() {
     }
 
     self.options[WALL_TELEPORT0] := new {}
-    self.options[WALL_TELEPORT0]["pos_diff"] := [-31, 0]
+    self.options[WALL_TELEPORT0]["pos_diff"] := [0, 0]
     self.options[WALL_TELEPORT0]["state_diff"] := -1
     self.options[WALL_BLOCK0 + 1] := new {}
     self.options[WALL_BLOCK0 + 1]["text"] := "OH HELLO"
 
-    for y in 0..H {
-        for x in 0..W {
+    for (0..H) \y {
+        for (0..W) \x {
             set_wall(self.map, [x, y], false, WALL_FLOOR)
             set_wall(self.map, [x, y], true, WALL_FLOOR)
 
@@ -244,7 +258,8 @@ pub fn state_create() {
 }
 
 pub fn state_preprocess(state, frame, time) {
-    for i in 0..MAP_SIZE {
+    #[=
+    for (0..MAP_SIZE) \i {
         # Modify based on state
         let cell = state.map[i]
         if is_teleport(cell) {
@@ -254,9 +269,10 @@ pub fn state_preprocess(state, frame, time) {
             let new_time = time + state_diff * INTERVAL
 
             if new_time >= FRAMES || new_time < 0 {
-                cell := WALL_BLOCK0
+                # TEMP
+                #cell := WALL_BLOCK0
             }
-        } else if is_door(cell) {
+        } elseif is_door(cell) {
             let door_id = cell - WALL_DOOR0
             if !(state.outputs & (1 << door_id)) {
                 cell := WALL_BLOCK0
@@ -266,12 +282,13 @@ pub fn state_preprocess(state, frame, time) {
         state.visual[i] := cell
     }
 
-    Object.values(frame.player_states).forEach({ |s|
+    Object.values(frame.player_states).forEach\s {
         # TODO: Set flag on all covered cells
         if s.cloak_timer < 0 {
             set_cell(state.visual, s.pos, CELL_PLAYER)
         }
-    })
+    }
+    =]
 }
 
 pub fn state_update(state, frame, time) {
@@ -296,35 +313,38 @@ pub fn state_update(state, frame, time) {
 
     
 
-    frame.actions.forEach({ |[ty, a, b, c]|
-        if (ty == ACTION_CHANGE) {
+    frame.actions.forEach\[ty, a, b, c] {
+        if ty == ACTION_CHANGE {
             set_loc(state.map, a, b)
-        } else if (ty == ACTION_MOVE) {
+        } elseif ty == ACTION_MOVE {
 
         }
-    })
+    }
 }
 
-fn time_in_state(world, s) {
+pub fn time_in_state(world, s) {
     return (world.offset + s * INTERVAL) % FRAMES
 }
 
 fn copy_to(from, to) {
-    if (from.constructor == Uint8Array) {
-        to := from.slice()
-    } else if (Array.isArray(from)) {
+    if Array.isArray(from) {
         to := to || []
         to.length := from.length;
         var i = 0
-        while (i < from.length) {
+        while i < from.length {
             to[i] := copy_to(from[i], to[i])
             i += 1
         }
-    } else if (typeof(from) === "object") {
-        to := (to || new {})
-        Object.keys(from).forEach({ |k|
-            to[k] := copy_to(from[k], to[k])
-        })
+    } elseif typeof(from) === "object" {
+        if from.constructor == Uint8Array {
+            to := from.slice()
+        } else {
+            to := (to || new {})
+            #Object.keys(from).forEach\k {
+            for_in(from) \k{
+                to[k] := copy_to(from[k], to[k])
+            }
+        }
     } else {
         to := from
     }
@@ -355,7 +375,8 @@ pub fn world_reset(w) {
     w.current_player := 0
     w.current_player_state := new {
         aim: [1, 0],
-        pos: [15.5, 15.5],
+        #pos: [15.5, 15.5],
+        pos: [16.754003723147108, 27.054039267500432], # -0.9048064154484199 -0.42582314470137306 -0.13055117170520747 -0.991441572442059 2
         cloak_timer: -1,
         inventory: []
     }
@@ -363,9 +384,9 @@ pub fn world_reset(w) {
 
     w.states.push(clone(w.first_state))
     var time = 0
-    for i in 1..STATES {
+    for (1..STATES) \i {
         let state = clone(w.states[w.states.length - 1])
-        for j in 0..INTERVAL {
+        for (0..INTERVAL) \j {
             state_update(state, w.frames[time], time)
             time += 1
         }
@@ -398,6 +419,497 @@ fn seen_cell(world, visual_cell_id) {
     let prev = world.visual[index]
     world.visual[index] := 1
     return prev
+}
+
+fn is_sweep_obstacle(wall) {
+    return is_wall(wall) || is_teleport(wall)
+}
+
+fn set_observed_wall_2(world, mirror, x, y, wall_dir, wall) {
+
+    if !mirror {
+        set_observed_wall(world, current_player_time(world), x, y, wall_dir, WALL_BLOCK0)
+    } else {
+        set_observed_wall(world, current_player_time(world), y, x, !wall_dir, WALL_BLOCK0)
+    }
+}
+
+fn set_observed_cell_2(world, mirror, x, y, cell) {
+
+    if !mirror {
+        set_observed_cell(world, current_player_time(world), x, y, cell)
+    } else {
+        set_observed_cell(world, current_player_time(world), y, x, cell)
+    }
+}
+
+fn test_wall(world, s, s_visual, mirror, wall_x, wall_y, wall_dir, originx, originy, stepx, slope, renders) {
+
+    let parity = if wall_dir { Math.sign(slope) } else { stepx }
+    #let stepy
+    if mirror {
+        let tempx = wall_x, temporg = originx
+        wall_x := wall_y
+        wall_y := tempx
+        originx := originy
+        originy := temporg
+        wall_dir := !wall_dir
+        #stepy := stepx
+        #stepx := Math.sign(slope)
+    } else {
+        #stepy := Math.sign(slope)
+    }
+
+    let cur_wall = get_wall_(s_visual, wall_x, wall_y, wall_dir)
+    #set_observed_wall_2(world, mirror, wall_x, wall_y, wall_dir, cur_wall)
+    set_observed_wall(world, current_player_time(world), wall_x, wall_y, wall_dir, cur_wall)
+
+    wall_tests += 1
+    var r
+    if is_sweep_obstacle(cur_wall) {
+        let wall_end_x = wall_x + wall_dir
+        let wall_end_y = wall_y + !wall_dir
+
+        let ax = wall_x - originx
+        let ay = wall_y - originy
+        let bx = wall_end_x - originx
+        let by = wall_end_y - originy
+
+        allocs += 1
+        r := new {
+            fromx: ax,
+            fromy: ay,
+            tox: bx,
+            toy: by,
+            color: 0xffffffff,
+            wall: cur_wall
+        }
+
+        if is_teleport(cur_wall) {
+            r.color := 0xffff0000
+            let opt = world.states[s].options[cur_wall & ~1]
+            let sign = (if cur_wall & 1 { -1 } else { 1 }) * parity
+
+            # TODO: option to block portal based on (north_south ? dir_positivex : dir_positivey)
+
+            let pos_diffx = sign * opt["pos_diff"][0],
+                pos_diffy = sign * opt["pos_diff"][1]
+            let state_diff = sign * opt["state_diff"]
+
+            if mirror {
+                let temp = pos_diffx
+                pos_diffx := pos_diffy
+                pos_diffy := temp
+            }
+
+            r.pos_diffx := pos_diffx
+            r.pos_diffy := pos_diffy
+            r.s := (s + STATES + state_diff) % STATES
+            r.pass := true
+        }
+
+        if renders {
+
+            let angled_visual_wall_id = Math.floor(ay) * (VISUAL_W * 2) + Math.floor(ax) * 2 + wall_dir
+
+            if !seen_wall(world, angled_visual_wall_id) {
+                let renderer = if cur_wall == WALL_WINDOW { renders.sky } else { renders.lines }
+
+                renderer.push(r)
+
+                if is_teleport(cur_wall) {
+                    renders.portal_texts.push(r)
+                }
+            }
+        }
+    }
+
+    return r
+}
+
+# Abusing inline lets. Add inline functions with pass by name.
+@inline let transform_with_ty = if ty {
+        let pos_diffx = ty.pos_diffx,
+            pos_diffy = ty.pos_diffy
+
+        originx += pos_diffx
+        originy += pos_diffy
+        iposx += pos_diffx
+        ipos1y += pos_diffy
+        ipos2y += pos_diffy
+        s := ty.s
+        s_visual := world.states[s].map
+
+        # TODO: If we're rotating direction, we need to do sweep6-kind logic
+    }
+
+fn sweep5_emu(world, s, originx, originy, dirx, diry, max_len) {
+    let result = new {}, hit
+    let emu_result = new {}
+    if Math.abs(dirx) > Math.abs(diry) {
+        hit := cast_edge(result,
+            false, false,
+            world, s, world.states[s].map,
+            false, originx, originy, originx | 0, originy | 0,
+            Math.sign(dirx), diry / Math.abs(dirx), max_len)
+    } else {
+        hit := cast_edge(result,
+            false, false,
+            world, s, world.states[s].map,
+            true, originy, originx, originy | 0, originx | 0,
+            Math.sign(diry), dirx / Math.abs(diry), max_len)
+        let t = result.hitx
+        result.hitx := result.hity
+        result.hity := t
+    }
+
+    emu_result.blocked := hit && !hit.pass
+    emu_result.end_s := result.s
+    emu_result.end_pos := [result.hitx, result.hity]
+    emu_result.end_length := result.length
+    emu_result.end_wall := if hit { hit.wall } else { WALL_FLOOR }
+    return emu_result
+}
+
+fn cast_edge(result,
+    stop_on_hit, stop_on_vertical,
+    world, s, s_visual,
+    mirror, originx, originy, iposx, ipos1y,
+    stepx, slope, limit, renders) {
+
+    var cur_wall = 0
+    var wall_x, wall_y
+    var piposx, piposy
+    var north_south, hit
+    var length
+
+    # fact = 1 / |dirx|
+    # dirx = stepx / sqrt(slope^1 + 1^1)
+    let fact = Math.hypot(slope, 1)
+
+    var lim = 0
+    let max_length = limit / fact
+
+    loop {
+
+        let dir_positivex = if stepx >= 0 { 1 } else { 0 }
+        let dir_positivey = if slope >= 0 { 1 } else { 0 }
+        let leapx = iposx + dir_positivex - originx
+        let leapy = ipos1y + dir_positivey - originy
+        let length_we = Math.abs(leapx)
+        let length_ns = leapy / slope
+        north_south := length_ns < length_we
+
+        piposx := iposx
+        piposy := ipos1y
+
+        lim += 1
+        if lim > 100 {
+            throw((no_sweep := true), "cast_edge timeout, " + stepx + ", " + slope)
+        }
+
+        if north_south {
+            wall_x := iposx
+            wall_y := ipos1y + dir_positivey
+            ipos1y += Math.sign(slope)
+            length := length_ns
+        } else {
+            wall_x := iposx + dir_positivex
+            wall_y := ipos1y
+            iposx += stepx
+            length := length_we
+        }
+
+        if stop_on_vertical && !north_south {
+            # Hit vertical
+            break
+        }
+
+        # TEMP: % 32
+        cur_wall := test_wall(world, s, s_visual, mirror, wall_x % 32, wall_y % 32, north_south, originx, originy, stepx, slope, renders)
+
+        if length >= max_length {
+            length := max_length
+            # Rewind
+            iposx := piposx
+            ipos1y := piposy
+            break
+        }
+
+        if cur_wall {
+            # Hit obstacle
+            hit := cur_wall
+            if stop_on_hit || !cur_wall.pass {
+                break
+            }
+            var ipos2y = 0 # Dummy to appease the transform macro
+            let ty = cur_wall
+            transform_with_ty
+        }
+    }
+
+    result.iposx := iposx
+    result.iposy := ipos1y
+    result.wall_x := wall_x
+    result.wall_y := wall_y
+    result.piposx := piposx
+    result.piposy := piposy
+    result.hitx := originx + stepx * length
+    result.hity := originy + slope * length
+    result.s := s
+    result.north_south := north_south
+    result.length := length * fact
+    return hit
+}
+
+var no_sweep = false
+
+pub fn assert(msg, condition) {
+    if !condition {
+        throw(no_sweep := true, "assert failed: " + msg)
+    }
+}
+
+let upper = new {}, lower = new {}
+
+pub fn cast_beam(world, ty, mirror, s, s_visual, originx, originy, iposx, ipos1y, ipos2y, stepx, slope1, slope2, limit, renders) {
+    # the beam has entered the non-blocking range of cells ipos1->ipos2, inclusive
+    transform_with_ty
+
+    if (world.offset % 60) == 0 {
+        #console.log(stepx, slope1, slope2)
+    }
+
+    let limit_sq = limit * limit
+    
+    let stepx_negative = if stepx < 0 { 1 } else { 0 }
+
+    let upper_hit = cast_edge(upper, true, true, world, s, s_visual, mirror, originx, originy, iposx, ipos1y, stepx, slope1, limit, renders)
+    let lower_hit = cast_edge(lower, true, true, world, s, s_visual, mirror, originx, originy, iposx, ipos2y, stepx, slope2, limit, renders)
+
+    let upper_piposy = upper.piposy,
+        upper_iposx = upper.iposx,
+        upper_iposy = upper.iposy,
+        upper_hitx = upper.hitx,
+        upper_hity = upper.hity
+
+    let lower_piposy = lower.piposy,
+        lower_iposx = lower.iposx,
+        lower_iposy = lower.iposy,
+        lower_hitx = lower.hitx,
+        lower_hity = lower.hity
+
+    let x = iposx + stepx
+    var y1 = Math.max(upper_iposy, upper_piposy), y2 = Math.min(lower_iposy, lower_piposy)
+
+    if upper_hit {
+        let w = upper_hit
+
+        if w.pass && upper_iposy < y1 {
+            # Beam up
+            #set_observed_wall_2(world, mirror, upper.wall_x, upper.wall_y, upper.north_south, WALL_BLOCK0) # TEMP
+            let cut_x = x + stepx_negative
+
+            if lower_hit && lower_iposy < y1 {
+                # Lower hits upwards too
+                cut_x := stepx * Math.min(stepx * cut_x, stepx * lower_hitx)
+            }
+
+            let new_slope2 = (y1 - originy) / Math.abs(cut_x - originx)
+
+            cast_beam(
+                world, w, mirror, s, s_visual,
+                originx, originy,
+                upper_iposx, upper_iposy, upper_iposy,
+                stepx, slope1, new_slope2,
+                limit,
+                renders)
+        }
+    }
+
+    if lower_hit {
+        let w = lower_hit
+
+        if w.pass && lower_iposy > y2 {
+            # Beam down
+            #set_observed_wall_2(world, mirror, lower.wall_x, lower.wall_y, lower.north_south, WALL_BLOCK0) # TEMP
+            let cut_x = x + stepx_negative
+            if upper_hit && upper_iposy > y2 {
+                # Upper hits downwards too
+                cut_x := stepx * Math.min(stepx * cut_x, stepx * upper_hitx)
+            }
+
+            let new_slope1 = (y2 + 1 - originy) / Math.abs(cut_x - originx)
+            
+            cast_beam(
+                world, w, mirror, s, s_visual,
+                originx, originy,
+                lower_iposx, lower_iposy, lower_iposy,
+                stepx, new_slope1, slope2,
+                limit,
+                renders)
+        }
+    }
+
+    var beginy = y1
+    var rangety
+    var cur_obstacle = false
+    var wallty = new { pass: false } # TODO: Move
+
+    let time = time_in_state(world, s)
+    for (Math.min(y1, ipos1y)..Math.max(y2, ipos2y) + 1) \y {
+        # TODO: Render objects in these
+        var local_originx = if mirror { originy } else { originx },
+            local_originy = if mirror { originx } else { originy }
+        let local_y = if mirror { iposx } else { y }
+        let local_x = if mirror { y } else { iposx }
+        var cur_cell = get_cell_(s_visual, local_x, local_y)
+        if is_key(cur_cell) {
+            renders.objects.push(new {
+                x: local_x + 0.5 - local_originx,
+                y: local_y + 0.5 - local_originy,
+                color: 0xff00ffff
+            })
+        } elseif cur_cell == CELL_EXIT {
+            renders.objects.push(new {
+                x: local_x + 0.5 - local_originx,
+                y: local_y + 0.5 - local_originy,
+                color: 0xffffff00
+            })
+        } elseif cur_cell == CELL_CLOAK {
+            renders.objects.push(new {
+                x: local_x + 0.5 - local_originx,
+                y: local_y + 0.5 - local_originy,
+                color: 0xffaaaaaa
+            })
+        }
+
+        let player_states = world.frames[time].player_states
+        for_in(player_states) \k {
+            let p = player_states[k]
+        #}
+        #Object.values(world.frames[time].player_states).forEach\p {
+            if (local_x == (p.pos[0] | 0) &&
+                local_y == (p.pos[1] | 0) &&
+                p.cloak_timer < 0) {
+
+                # TODO: Check if we've rendered player id at visual_cell_id
+                renders.lines.push(new {
+                    #from: vec.vsub2(p.pos, [local_originx, local_originy]),
+                    fromx: p.pos[0] - local_originx,
+                    fromy: p.pos[1] - local_originy,
+                    #to: vec.vsub2(vec.vadd2(p.pos, p.aim), [local_originx, local_originy]),
+                    tox: p.pos[0] + p.aim[0] - local_originx,
+                    toy: p.pos[1] + p.aim[1] - local_originy,
+                    color: 0xff0000ff
+                    #trans: composite_transform
+                })
+
+                cur_cell |= CELL_PLAYER
+            }
+        }
+
+        set_observed_cell(world, time, local_x, local_y, cur_cell)
+    }
+
+    for (y1..y2 + 2) \y {
+        let next, next_obstacle
+        let cut = y == y2 + 1
+        if !cut {
+
+            let xdiff = x + stepx_negative - originx,
+                ydiff1 = y - originy,
+                ydiff2 = y + 1 - originy,
+                xdiff_sq = xdiff * xdiff,
+                dist1_sq = xdiff_sq + ydiff1 * ydiff1,
+                dist2_sq = xdiff_sq + ydiff2 * ydiff2
+
+            if dist1_sq > limit_sq && dist2_sq > limit_sq {
+                next := wallty
+                #next_obstacle := true
+            } else {
+                next := test_wall(world, s, s_visual, mirror, x + stepx_negative, y, false, originx, originy, stepx, 0, renders)
+                #next_obstacle := is_sweep_obstacle(next)
+            }
+
+            cut := ! !next || cur_obstacle
+            if !cut && y != y1 {
+                #set_observed_wall_2(world, mirror, x, y, true, WALL_BLOCK0)
+                # TODO: Simplified test_wall? We don't need much of the functionality
+                cut := ! !test_wall(world, s, s_visual, mirror, x, y, true, originx, originy, 0, 0)
+            }
+        }
+
+        if cut {
+            let endy = y
+            if (world.offset % 60) == 0 {
+                #console.log("rangety", rangety)
+            }
+            if beginy < endy && (!rangety || rangety.pass) {
+
+                let new_dir1x = x + stepx_negative - originx
+                let new_dir1y = Math.max(beginy, upper_hity) - originy
+                let new_dir2x = x + stepx_negative - originx
+                let new_dir2y = Math.min(endy, lower_hity) - originy
+
+                if new_dir1y < new_dir2y {
+                    let new_slope1 = new_dir1y / Math.abs(new_dir1x)
+                    let new_slope2 = new_dir2y / Math.abs(new_dir2x)
+
+#[=
+                    if is_teleport(rangety) { # TEMP
+                        for (beginy..endy) \wally {
+                            set_observed_wall_2(world, mirror, x + stepx_negative, wally, false, WALL_BLOCK0)
+                        }
+                    }
+                    =]
+
+                    cast_beam(
+                        world, rangety, mirror, s, s_visual,
+                        originx, originy,
+                        x, beginy, endy - 1,
+                        stepx, new_slope1, new_slope2,
+                        limit,
+                        renders)
+                }
+            }
+            beginy := y
+            rangety := next
+        }
+
+        cur_obstacle := ! !next
+    }
+}
+
+pub fn sweep6(world, mirror, s, originx, originy, dir1x, dir1y, dir2x, dir2y, max_len, renders) {
+    if no_sweep { return }
+
+    var iposx = originx | 0;
+    var iposy = originy | 0;
+    #var ipos2x = originx | 0;
+    #var ipos2y = originy | 0;
+
+    let s_visual = world.states[s].map
+    let limit = 64
+    var k = 0
+    var thresh = 0.01
+    if dir1x >= thresh && dir2x >= thresh {
+        cast_beam(world, undefined, mirror, s, s_visual, originx, originy, iposx, iposy, iposy, 1, dir1y / Math.abs(dir1x), dir2y / Math.abs(dir2x), limit, renders)
+        k := 1
+    } elseif dir1x <= -thresh && dir2x <= -thresh {
+        cast_beam(world, undefined, mirror, s, s_visual, originx, originy, iposx, iposy, iposy, -1, dir2y / Math.abs(dir2x), dir1y / Math.abs(dir1x), limit, renders)
+        k := 2
+    } elseif dir1y >= thresh && dir2y >= thresh {
+        cast_beam(world, undefined, !mirror, s, s_visual, originy, originx, iposy, iposx, iposx, 1, dir2x / Math.abs(dir2y), dir1x / Math.abs(dir1y), limit, renders)
+        k := 3
+    } elseif dir1y <= thresh && dir2y <= thresh {
+        cast_beam(world, undefined, !mirror, s, s_visual, originy, originx, iposy, iposx, iposx, -1, dir1x / Math.abs(dir1y), dir2x / Math.abs(dir2y), limit, renders)
+        k := 4
+    }
+
+    @debug if (world.offset % 60) == 0 {
+        console.log(originx, originy, dir1x, dir1y, dir2x, dir2y, k)
+    }
 }
 
 pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
@@ -442,10 +954,10 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
             let time = time_in_state(world, s)
             if cur_cell == CELL_PLAYER {
                 
-                Object.values(world.frames[time].player_states).forEach({ |p|
-                    if iposx == (p.pos[0] | 0) &&
-                       iposy == (p.pos[1] | 0) &&
-                       p.cloak_timer < 0 {
+                Object.values(world.frames[time].player_states).forEach\p {
+                    if (iposx == (p.pos[0] | 0) &&
+                        iposy == (p.pos[1] | 0) &&
+                        p.cloak_timer < 0) {
 
                         # TODO: Check if we've rendered player id at visual_cell_id
                         renders.lines.push(new {
@@ -459,8 +971,8 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
                             #trans: composite_transform
                         })
                     }
-                })
-            } else if is_key(cur_cell) {
+                }
+            } elseif is_key(cur_cell) {
                 let p = [iposx + 0.5, iposy + 0.5]
                 renders.lines.push(new {
                     fromx: iposx - originx,
@@ -471,7 +983,7 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
                     color: 0xff00ffff
                     #trans: composite_transform
                 })
-            } else if cur_cell == CELL_EXIT {
+            } elseif cur_cell == CELL_EXIT {
                 let p = [iposx + 0.5, iposy + 0.5]
                 renders.lines.push(new {
                     fromx: iposx - originx,
@@ -481,7 +993,8 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
                     color: 0xffffff00
                     #trans: composite_transform
                 })
-            } else if cur_cell == CELL_CLOAK {
+            } elseif cur_cell == CELL_CLOAK {
+                #[=
                 let p = [iposx + 0.5, iposy + 0.5]
                 renders.lines.push(new {
                     fromx: iposx - originx,
@@ -491,6 +1004,14 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
                     color: 0xffaaaaaa
                     #trans: composite_transform
                 })
+                =]
+
+                renders.objects.push(new {
+                    x: iposx + 0.5,
+                    y: iposy + 0.5,
+                    color: 0xffaaaaaa
+                })
+                
             }
             
             # TODO: Check for conflict with map
@@ -498,7 +1019,7 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
         }
 
 
-        #let dir_positive = [dirx, diry].map({|v| if v >= 0 { return 1 } else { return 0 }})
+        #let dir_positive = [dirx, diry].map\v { if v >= 0 { return 1 } else { return 0 }}
         let dir_positivex = if dirx >= 0 { 1 } else { 0 }
         let dir_positivey = if diry >= 0 { 1 } else { 0 }
         #let leap = vec.vadd2(vec.vsub2(ipos, [originx, originy]), dir_positive)
@@ -571,7 +1092,7 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
                     bx := tempx
                     by := tempy
                 }
-                
+
                 #let a = vec.vsub2([div_start_x, div_start_y], [originx, originy]),
                 #    b = vec.vsub2([div_endx, div_endy], [originx, originy])
                 renderer.push(new {
@@ -609,14 +1130,13 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
             }
 
             break
-        } else if is_teleport(cur_wall) {
+        } elseif is_teleport(cur_wall) {
             let angled_visual_wall_id = visual_wall_id + north_south
             let div_endx = div_start_x + north_south
             let div_endy = div_start_y + !north_south
 
-            #if record && !set_wall(world.states[s].visual, div_start, north_south, 1) {
             let opt = world.states[s].options[cur_wall & ~1]
-            let sign = if cur_wall & 1 { -1 } else { 1 }
+            let sign = (if cur_wall & 1 { -1 } else { 1 }) * (if north_south { Math.sign(diry) } else { Math.sign(dirx) })
 
             # TODO: option to block portal based on (north_south ? dir_positivex : dir_positivey)
 
@@ -675,12 +1195,14 @@ pub fn sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
             let linedx = dirx * length
             let linedy = diry * length
             # [originx, originy] := vec.vsub2(vec.vadd2([originx, originy], lined), lined) # TODO: Mult with trans
-            originx -= originx + linedx
-            originy -= originy + linedy
+            originx := (originx + linedx) - linedx
+            originy := (originy + linedy) - linedy
+            #originx -= originx + linedx
+            #originy -= originy + linedy
             # TODO: [dirx, diry] = trans * [dirx, diry];
             # TODO: change inv* too
 
-            #ipos := vec.vadd2(ipos, [dirx, diry].map({|v| if v >= 0.0 { return 1 } else { return 0 }}))
+            #ipos := vec.vadd2(ipos, [dirx, diry].map\v { if v >= 0.0 { return 1 } else { return 0 }})
             iposx := iposx + if dirx >= 0 { 1 } else { 0 }
             iposy := iposy + if diry >= 0 { 1 } else { 0 }
             s := (s + STATES + state_diff) % STATES
@@ -731,17 +1253,23 @@ fn sweep(world, origin, aim, renders) {
     let fov = 1
     let fov_vec = [Math.cos(fov / 2), Math.sin(fov / 2)]
 
-    let a = vec.vrotate(aim, [fov_vec[0], -fov_vec[1]])
-    let b = vec.vsub2(vec.vrotate(aim, fov_vec), a)
+    let first = vec.vrotate(aim, [fov_vec[0], -fov_vec[1]])
+    let second = vec.vrotate(aim, fov_vec)
+    let diff = vec.vsub2(second, first)
     var i = 0
-    let rays = 512
-    #let rays = 100
-    while i < rays {
-        let m = vec.vadd2(a, vec.vmul2(b, (i / rays)))
-        m := vec.vmul2(m, 1 / Math.hypot(m[0], m[1]))
-        sweep5(world, world.current_state, origin[0], origin[1], m[0], m[1], 64, renders)
-        i += 1
-    }
+#[=
+    if false {
+        let rays = 512
+        #let rays = 100
+        while i < rays {
+            let m = vec.vadd2(first, vec.vmul2(diff, (i / rays)))
+            m := vec.vmul2(m, 1 / Math.hypot(m[0], m[1]))
+            sweep5(world, world.current_state, origin[0], origin[1], m[0], m[1], 64, renders)
+            i += 1
+        }
+    } else {
+    =]
+    sweep6(world, false, world.current_state, origin[0], origin[1], first[0], first[1], second[0], second[1], 64, renders)
 }
 
 pub fn current_player_time(world) {
@@ -751,7 +1279,7 @@ pub fn current_player_time(world) {
 pub fn world_update(world, action, renders, paused) {
 
     if !paused {
-        for s in 0..STATES {
+        for (0..STATES) \s {
             let time = time_in_state(world, s)
             state_update(world.states[s], world.frames[time], time)
             if time == FRAMES - 1 {
@@ -768,7 +1296,7 @@ pub fn world_update(world, action, renders, paused) {
 
     world.current_player_state.aim := action.aim;
     if action.act {
-        let act_result = sweep5(world, world.current_state,
+        let act_result = sweep5_emu(world, world.current_state,
             world.current_player_state.pos[0]
             world.current_player_state.pos[1],
             action.aim[0],
@@ -805,7 +1333,7 @@ pub fn world_update(world, action, renders, paused) {
         let pi = world.current_player_state.pos
         let walk_dir = vec.vnormalize2(action.walk)
 
-        let result = sweep5(world, world.current_state,
+        let result = sweep5_emu(world, world.current_state,
             world.current_player_state.pos[0],
             world.current_player_state.pos[1],
             walk_dir[0],
@@ -832,7 +1360,7 @@ pub fn world_update(world, action, renders, paused) {
         var ang = 0, min_dist = 10, min_dir
         while ang < Math.PI*2 {
             let dir = [Math.cos(ang), Math.sin(ang)]
-            let res = sweep5(world, world.current_state,
+            let res = sweep5_emu(world, world.current_state,
                 world.current_player_state.pos[0],
                 world.current_player_state.pos[1],
                 dir[0],
@@ -860,9 +1388,9 @@ pub fn world_update(world, action, renders, paused) {
                 world.reset_on := world.offset + RESET_TIMER
                 # TODO: Increment level
             }
-        } else if on_cell == CELL_CLOAK {
+        } elseif on_cell == CELL_CLOAK {
             world.current_player_state.cloak_timer := CLOAK_TIME
-        } else if is_pickable(on_cell) {
+        } elseif is_pickable(on_cell) {
             let time = current_player_time(world);
             world.current_player_state.inventory[on_cell] |= 1
             let to = CELL_FLOOR
@@ -887,18 +1415,19 @@ pub fn world_update(world, action, renders, paused) {
 
     let origin = world.current_player_state.pos
     let aim = world.current_player_state.aim
-    for s in 0..STATES {
+    for (0..STATES) \s {
         let time = time_in_state(world, s)
         # Set visual map
         state_preprocess(world.states[s], world.frames[time], time)
     }
     let prev_conflicts = world.conflicts
     sweep(world, origin, aim, renders)
-    if world.conflicts != prev_conflicts && !paused {
+    #if world.conflicts != prev_conflicts && !paused {  # TEMP
+    if false {
         # Violation
         if get_observed_cell(world, now, world.current_player_state.pos[0] | 0, world.current_player_state.pos[1] | 0) != CELL_PLAYER {
             # TODO: Try past locations first
-            for i in 0..20 {
+            for (0..20) \i {
                 world.current_player_state.pos := [Math.random() * 31, Math.random() * 31]
                 let dest = get_observed_cell(world, now, world.current_player_state.pos[0], world.current_player_state.pos[1])
                 if dest == 0 || dest == CELL_PLAYER {
@@ -921,9 +1450,11 @@ pub fn world_update(world, action, renders, paused) {
     if !paused && (now % SECOND) == 0 {
         let seconds = (now / SECOND)
         @debug console.log((seconds / 60) | 0, seconds % 60, "player ", world.current_player)
-        @debug console.log("renders:", wall_render, cell_render, ray_steps)
+        @debug console.log("renders:", wall_tests, allocs)
+        wall_tests := 0
         wall_render := 0
         cell_render := 0
         ray_steps := 0
+        allocs := 0
     }
 }

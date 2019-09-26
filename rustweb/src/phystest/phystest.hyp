@@ -1,0 +1,150 @@
+use "../render" as render
+
+use "glsl/main" as main_glsl
+use "../vecmath" as vec
+
+#let uniLocs
+#let uniNames = ["t", "P", "R"]
+
+let fs = main_glsl.main
+
+fn genTex(pixels, ty, f) {
+    let side = Math.sqrt(pixels.length)
+    let w = side
+    let h = side
+    var i = 0, y = 0
+
+    while y < h {
+        var x = 0
+        while x < w {
+            pixels[i] := f(x, y)
+            x += 1
+            i += 1
+        }
+        y += 1
+    }
+
+    let pixtex = render.createTexture(pixels, side, ty)
+
+    @debug console.log(pixels)
+
+    pixtex.d := pixels
+    return pixtex
+}
+
+fn clamp(x, min, max) {
+    if x <= min {
+        return min
+    } elseif x >= max {
+        return max
+    } else {
+        return x
+    }
+}
+
+# TODO: Put in binary section
+let fontBits = atob("1tb7v+b97tm0mua3bd+RTdi2aZKKzd+2UduWlfRd/5f+v7j8XS+1l1SFZFO2adKqTd98VPUq08c9X+c97tW3ijtZrQ4=").
+    split("").
+    map\x { return x.charCodeAt(0) }
+var whiteTex
+
+fn startGame() {
+    let gl, imgShader, translucentShader,
+        skyShader, skyMirrorShader, gridShader,
+        fb
+    let canvas = document.getElementById("g")
+    #let canvas = document.getElementsByTagName("canvas")[0]
+    
+    render.init(canvas)
+    gl := render.gl
+
+    imgShader := render.createShaderProgram(render.basicVs, fs)
+
+    fn getPointColor(x, y) {
+        let alpha = ((7.5 - Math.hypot(x - 8, y - 8)) * 64.0) | 0
+        #return 0x00ffffff + (clamp(alpha, 0, 255) << 24)
+        return 0x001010ff + (clamp(alpha, 0, 255) << 24)
+    }
+
+
+    let pointTex = genTex(new Uint32Array(16*16), render.GL_RGBA, getPointColor)
+    whiteTex := genTex(new Uint32Array(1), render.GL_RGBA, { return 0xffffffff });
+    let world = state.world_create()
+
+    let keys = new {}
+    
+    window.onkeydown := \ev {
+        keys[ev.keyCode] := 1
+    }
+
+    window.onkeyup := \ev {
+        keys[ev.keyCode] := 0
+    }
+
+    canvas.onclick := {
+
+        canvas.requestPointerLock()
+    }
+
+    canvas.onmousemove := \e {
+        if document.pointerLockElement == canvas {
+            let xdiff = e.movementX / 500
+            let ydiff = e.movementY / 500
+#            aim := vec.vrotate(aim, [Math.cos(xdiff), Math.sin(xdiff)])
+#            aimv := vec.vrotate(aimv, [Math.cos(ydiff), Math.sin(ydiff)])
+            # TODO: Don't allow aimv to have X below a certain threshold (based on vertical fov)
+        }
+    }
+
+    var nextFrame = 0
+    
+    fn update() {
+        window.requestAnimationFrame \currentTime {
+            update()
+            render.time += 1/60
+            let speed = if keys[16] { 5 } else { 1 }
+
+            for (0..speed) \i {
+
+            }
+
+            gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
+            gl.clear(render.GL_COLOR_BUFFER_BIT)
+
+            render.activateShader(imgShader)
+            render.setView2([1, 0], [1, 0])
+            render.wall3d(whiteTex, 10, 0, 20, 0, 10, 20, 0, 0, 1, 1)
+
+            # Render normal
+            #render.setView2([aim[1], aim[0]], aimv)
+#            render_map(renders, 1)
+            
+            #render.activateShader(skyShader)
+            #[=
+            let z = -2500
+            render.wall3d(pointTex, -1000, z, 1000, z, -1024, 1024,
+                0, 0, 1, 1)
+            =]
+
+            #[=
+            renders.forEach\r {
+                let step = 100 #512 * 2
+                let z = (-r.ul[0] - 1) * step
+                let x = r.ul[1] * step
+                render.wall3d(pointTex, x + step, z, x, z, -step / 2, step / 2, 0, 0, 1, 1);
+                render.wall3d(pointTex, x, z, x, z + step, -step / 2, step / 2, 0, 0, 1, 1);
+                render.wall3d(pointTex, x + step, z + step, x + step, z, -step / 2, step / 2, 0, 0, 1, 1);
+                render.wall3d(pointTex, x, z + step, x + step, z + step, -step / 2, step / 2, 0, 0, 1, 1);
+            }
+            =]
+
+            render.flush()
+        }
+    }
+
+    update()
+}
+
+window.onload := \ {
+    startGame()
+}

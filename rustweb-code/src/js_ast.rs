@@ -95,6 +95,7 @@ pub enum JsAst {
     If { cond: Box<JsAst>, then_branch: Vec<JsAst>, else_branch: Option<Box<JsAst>> },
     While { cond: Box<JsAst>, body: Vec<JsAst> },
     For { pre: Box<JsAst>, cond: Box<JsAst>, post: Box<JsAst>, body: Vec<JsAst> },
+    ForIn { obj: Box<JsAst>, var: u32, body: Vec<JsAst> },
     Break,
     Loop { body: Vec<JsAst> },
     Array { elems: Vec<JsAst> },
@@ -114,6 +115,7 @@ impl JsAst {
             | JsAst::Use { .. }
             | JsAst::Break { .. }
             | JsAst::For { .. }
+            | JsAst::ForIn { .. }
             | JsAst::Fn { .. } => false,
             JsAst::If { then_branch, else_branch, .. } =>
                 else_branch.is_some() &&

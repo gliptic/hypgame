@@ -66,6 +66,17 @@ pub struct AstLambda {
     pub return_type: AstType
 }
 
+impl AstLambda {
+    pub fn new_empty() -> AstLambda {
+        AstLambda {
+            params: vec![],
+            param_locals: vec![],
+            expr: vec![],
+            return_type: AstType::None
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum AppKind {
     Normal,
@@ -109,7 +120,7 @@ pub enum AstData {
     LetLocal { name: Ident, ty: AstType, init: Option<AstRef>, local_index: u32, attr: Attr },
     FnLocal { name: Ident, lambda: AstLambda, local_index: u32, exported: bool },
     Field { base: AstRef, member: AstRef },
-    For { name: Ident, pat: u32, iter: (AstRef, AstRef), body: AstLambda },
+    For { pat: u32, iter: (AstRef, AstRef), body: AstLambda },
     Index { base: AstRef, index: AstRef }, // TODO: Same as above?
     Array { elems: Vec<Ast> },
     If { cond: AstRef, body: AstLambda, else_body: Option<AstRef> },
@@ -363,7 +374,8 @@ pub struct LocalDef {
     pub ty: AstType,
     pub name: Ident,
     pub is_mut: bool,
-    pub const_value: Option<Lit>
+    pub const_value: Option<Lit>,
+    pub need_qualification: bool
 }
 
 #[derive(Clone, Debug)]
@@ -399,6 +411,7 @@ pub struct ModuleInfo {
     pub import_map: Vec<u32>,
     pub conflict_tree: ConflictTree<u32>,
     pub language: Language,
+    pub external: bool
 }
 
 
@@ -440,7 +453,34 @@ impl ModuleInfo {
             exports_rev: module.exports_rev,
             conflict_tree: ConflictTree::new(),
             import_map,
-            language: module.language
+            language: module.language,
+            external: false
+        })
+    }
+
+    pub fn from_externals(
+        module_name: String,
+        locals: Vec<LocalDef>,
+        exports: Vec<u32>,
+        language: Language) -> (AstLambda, ModuleInfo) {
+
+        let mut exports_rev = HashMap::new();
+        for &export in &exports {
+            exports_rev.insert(locals[export as usize].name.clone(), export);
+        }
+
+        (AstLambda::new_empty(), ModuleInfo {
+            name: module_name,
+            src: vec![],
+            path: PathBuf::new(),
+            locals,
+            local_types: vec![], // TODO
+            exports,
+            exports_rev,
+            conflict_tree: ConflictTree::new(),
+            import_map: vec![],
+            language,
+            external: true
         })
     }
 

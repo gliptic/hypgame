@@ -1,7 +1,8 @@
 use vecmath
 use "glsl/vertex" as vertex_glsl
+#use "glsl/main" as main_glsl
 
-pub let gl, canvas_w, canvas_h, viewTrans, viewTrans2
+pub let gl, canvas_w, canvas_h, viewTrans, viewTrans2, time = 0
 
 pub let GL_VERTEX_SHADER = 0x8B31,
     GL_FRAGMENT_SHADER = 0x8B30,
@@ -183,7 +184,7 @@ pub fn setView(x, y, rotx, roty, zoom) {
 }
 
 pub fn flush() {
-    if (vertexData.length) {
+    if vertexData.length {
         gl.vertexAttribPointer(locPos, 3, GL_FLOAT, 0, VERTEX_SIZE, 0)
         gl.vertexAttribPointer(locUV, 2, GL_FLOAT, 0, VERTEX_SIZE, 12)
         gl.vertexAttribPointer(locColor, 4, GL_FLOAT, 0, VERTEX_SIZE, 20)
@@ -207,7 +208,7 @@ pub fn prism(texture, fx, fy, fz, ex, ey, ez) {
 
     let abgr = col
 
-    if (texture != currentTexture) {
+    if texture != currentTexture {
         flush()
         currentTexture := texture
         gl.bindTexture(GL_TEXTURE_2D, currentTexture)
@@ -262,7 +263,7 @@ pub fn wall3d(texture, fx0, fz0, fx1, fz1, fy, cy, u0, v0, u1, v1) {
     let x3 = fx0,     y3 = cy,     z3 = fz0
     let abgr = col
 
-    if (texture != currentTexture) {
+    if texture != currentTexture {
         flush()
         currentTexture := texture
         gl.bindTexture(GL_TEXTURE_2D, currentTexture)
@@ -295,7 +296,7 @@ pub fn compileShader(source, ty) {
     gl.shaderSource(shader, "#extension GL_OES_standard_derivatives:enable\nprecision lowp float;" + source)
     gl.compileShader(shader)
 
-    if (!gl.getShaderParameter(shader, GL_COMPILE_STATUS)) {
+    if !gl.getShaderParameter(shader, GL_COMPILE_STATUS) {
         #console.log(`Error compiling ${ty === GL_VERTEX_SHADER ? "vertex" : "fragment"} shader:`)
         console.log(gl.getShaderInfoLog(shader))
     }
@@ -304,7 +305,7 @@ pub fn compileShader(source, ty) {
 
 pub fn bindAttribLocations(shader) {
     [vertex_glsl.pos, vertex_glsl.texcoord, vertex_glsl.color].
-        map({ |name, i| gl.bindAttribLocation(shader, i, name) })
+        map\name, i { gl.bindAttribLocation(shader, i, name) }
 }
 
 pub fn createShaderProgram(vsSource, fsSource) {
@@ -315,7 +316,7 @@ pub fn createShaderProgram(vsSource, fsSource) {
     gl.attachShader(program, fShader)
     gl.linkProgram(program)
 
-    if (!gl.getProgramParameter(program, GL_LINK_STATUS)) {
+    if !gl.getProgramParameter(program, GL_LINK_STATUS) {
         console.log("Error linking shader program:")
         console.log(gl.getProgramInfoLog(program))
     }
@@ -352,21 +353,21 @@ pub fn init(canvas) {
 }
 
 pub fn drawText(fontBits, whiteTex, text, x, y, z, dirx, dirz, diry, scale) {
-    for i in 0..(text.length) {
+    for (0..(text.length)) \i {
         let ch = text.charCodeAt(i);
 
         var id = 200;
-        if (ch >= 48 && ch <= 57) {
+        if ch >= 48 && ch <= 57 {
             id := ch - 48
-        } else if (ch >= 65 && ch <= 90) {
+        } elseif ch >= 65 && ch <= 90 {
             id := ch - 65 + 10
         }
 
         var step = scale;
-        for column in 0..3 {
-            for row in 0..5 {
+        for (0..3) \column {
+            for (0..5) \row {
                 let pos = (4 - row) * 36 * 3 + id * 3 + column
-                if ((fontBits[pos >> 3] >> (pos & 7)) & 1) {
+                if (fontBits[pos >> 3] >> (pos & 7)) & 1 {
 
                     let abs_column = i * 4 + column
 

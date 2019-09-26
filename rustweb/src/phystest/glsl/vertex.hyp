@@ -1,0 +1,30 @@
+@language(glsl)
+
+@attribute pub let pos: vec3
+@attribute pub let texcoord: vec2
+@attribute pub let color: vec4
+
+@varying pub let fsPos: vec3
+@varying pub let fsTexcoord: vec2
+@varying pub let fsColor: vec4
+
+@uniform pub let ar: float
+@uniform pub let viewMat: mat3, viewMat2: mat3
+
+@inline let perspective3d =
+    mat4(
+        1.83,   0, 0,  0,
+        0,      1.83 * ar, 0,  0,
+        0,      0,   -1, -1,
+        0,      0,   -2,  0)
+
+pub fn main() {
+    fsPos := pos
+    fsTexcoord := texcoord
+    fsColor := color
+
+    let dir: vec3 = viewMat2 * viewMat * pos
+    @inline let v: vec4 = perspective3d * vec4(dir.xyz, 1)
+
+    gl_Position := v
+}

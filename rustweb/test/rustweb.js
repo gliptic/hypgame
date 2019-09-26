@@ -1,21 +1,48 @@
 (function(window){
-var main = [`vec3 a = normalize(vec3(m.x, n.y, m.z));
+var vertex = `varying vec3 u;
+varying vec2 v;
+varying vec4 w;
+attribute vec3 a;
+attribute vec2 c;
+attribute vec4 d;
+uniform float e;
+uniform mat3 f;
+uniform mat3 g;
+void main() {
+  u = a;
+  v = c;
+  w = d;
+  vec3 b = g * f * a;
+  gl_Position = mat4(1.83, 0, 0, 0, 0, 1.83 * e, 0, 0, 0, 0, -1, -1, 0, 0, -2, 0) * vec4(b.xyz, 1);
+}
+
+`;
+var main = [`vec3 a = normalize(vec3(u.x, v.y, u.z)), b = vec3(0, 1000, 0);
+  float q = 900. * 900., e = a.y * -.5 + .5;
+  vec3 h = vec3(m(a)) + mix(mix(vec3(0), vec3(.2, .1, .43), e + .3), vec3(.08, .61, .83), e * 1.5 - .4);
+  float c = dot(a, b), p = dot(b, b) - q, j = c * c - p;
+  if (j > 0.) {
+    float d = -sqrt(j) - c;
+    if (d > 0.) {
+      vec3 o = a * d;
+      h = vec3(.1, .2, .4) + vec3(0., .1, .4) * t(o.xz * .05, n);
+    }
+  }
+  gl_FragColor = vec4(h, 1);
+}
+
+`,`vec3 a = normalize(vec3(u.x, -v.y, u.z));
   float b = a.y * -.5 + .5;
-  gl_FragColor = vec4(vec3(i(a)) + mix(mix(vec3(0), vec3(.2, .1, .43), b + .3), vec3(.08, .61, .83), b * 1.5 - .4), 1);
+  gl_FragColor = vec4(vec3(m(a)) + mix(mix(vec3(0), vec3(.2, .1, .43), b + .3), vec3(.08, .61, .83), b * 1.5 - .4), 1);
 }
 
-`,`vec3 a = normalize(vec3(m.x, -n.y, m.z));
-  float b = a.y * -.5 + .5;
-  gl_FragColor = vec4(vec3(i(a)) + mix(mix(vec3(0), vec3(.2, .1, .43), b + .3), vec3(.08, .61, .83), b * 1.5 - .4), 1);
+`,`gl_FragColor = texture2D(s, v) * w;
 }
 
-`,`gl_FragColor = texture2D(k, n) * o;
+`,`gl_FragColor = vec4(w.rgb, .5);
 }
 
-`,`gl_FragColor = vec4(o.rgb, .5);
-}
-
-`,`vec2 c = n.xy * 5., b = step(2. * abs(fract(c - .5) - .5), vec2(.8));
+`,`vec2 c = v.xy * 5., b = step(2. * abs(fract(c - .5) - .5), vec2(.8));
   float a = 1. - min(b.x, b.y);
   gl_FragColor = vec4(a * .1, a, a, 1);
 }
@@ -29,59 +56,64 @@ var main = [`vec3 a = normalize(vec3(m.x, n.y, m.z));
   gl_FragColor = vec4(1, 1, 1, 1 == 1 ? 1 : 1);
 }
 
-`].map(function (a) { return `varying vec2 n;
-varying vec4 o;
-varying vec3 m;
-uniform sampler2D k;
-float g(vec2 a) {
+`].map(function (a) { return `varying vec4 w;
+varying vec3 u;
+varying vec2 v;
+uniform sampler2D s;
+uniform float n;
+float k(vec2 a) {
   return fract(sin(dot(a.xy, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
-float d(vec3 c) {
-  float e = 1. / 700.;
-  vec2 a = c.xy * (.5 / e) / max(.001, abs(c.z));
-  float p = 20., f = 0.;
+float i(vec3 c) {
+  float d = 1. / 700.;
+  vec2 a = c.xy * (.5 / d) / max(.001, abs(c.z));
+  float h = 20., e = 0.;
   a = floor(a);
-  if (g(a.xy * e) > .997) {
-    float b = g(a.xy * .5), j = 0.;
-    f += b * (.3 * sin(j * 5. * (b * 5.) + b) + .7) * 1.5;
+  if (k(a.xy * d) > .997) {
+    float b = k(a.xy * .5);
+    e += b * (.3 * sin(n * 5. * (b * 5.) + b) + .7) * 1.5;
   }
-  return f * abs(c.z);
+  return e * abs(c.z);
 }
 
-mat3 l(float a, float b) {
+mat3 r(float a, float b) {
   return mat3(cos(a), 0, -sin(a), 0, 1, 0, sin(a), 0, cos(a)) * mat3(1, 0, 0, 0, cos(b), sin(b), 0, -sin(b), cos(b));
 }
 
-float h(vec3 a) {
-  return d(a.xyz) + d(a.yzx) + d(a.zxy);
+float l(vec3 a) {
+  return i(a.xyz) + i(a.yzx) + i(a.zxy);
 }
 
-float i(vec3 a) {
+float m(vec3 a) {
   float c = 3.1415927, b = c / 180.;
-  return h(a) + h(l(45. * b, 45. * b) * a);
+  return l(a) + l(r(45. * b, 45. * b) * a);
+}
+
+float g(vec2 a) {
+  return sin(a.x) * sin(a.y);
+}
+
+float f(vec2 a) {
+  float b = 0.;
+  mat2 c = mat2(.8, .6, -.6, .8);
+  b += .5 * g(a);
+  a = c * a * 2.02;
+  b += .25 * g(a);
+  a = c * a * 2.03;
+  b += .125 * g(a);
+  a = c * a * 2.01;
+  b += .0625 * g(a);
+  return b / .9375;
+}
+
+float t(vec2 a, float c) {
+  vec2 b = vec2(f(a), f(a + vec2(5.2, 1.3))), d = vec2(f(a + 4. * b + vec2(1.7, 9.2)), f(a + 4. * b + vec2(8.3, 2.8)));
+  return f(a + 4. * d + c);
 }
 
 void main() {
   ` + a; });
-var vertex = `varying vec3 m;
-varying vec2 n;
-varying vec4 o;
-attribute vec3 a;
-attribute vec2 c;
-attribute vec4 d;
-uniform float e;
-uniform mat3 f;
-uniform mat3 g;
-void main() {
-  m = a;
-  n = c;
-  o = d;
-  vec3 b = g * f * a;
-  gl_Position = mat4(1.83, 0, 0, 0, 0, 1.83 * e, 0, 0, 0, 0, -1, -1, 0, 0, -2, 0) * vec4(b.xyz, 1);
-}
-
-`;
 var $bin=("test").split('').map(x=>x.charCodeAt(0));function trans(mat, x, y$0) {
   mat[6] += mat[0] * x + mat[3] * y$0;
   mat[7] += mat[1] * x + mat[4] * y$0;
@@ -133,6 +165,7 @@ var canvas_w;
 var canvas_h;
 var viewTrans;
 var viewTrans2;
+var time = 0;
 var GL_VERTEX_SHADER = 35633;
 var GL_FRAGMENT_SHADER = 35632;
 var GL_ELEMENT_ARRAY_BUFFER = 34963;
@@ -404,9 +437,12 @@ var RESET_TIMER = SECOND * 5;
 var wall_render = 0;
 var cell_render = 0;
 var ray_steps = 0;
+var wall_tests = 0;
+var allocs = 0;
 console.log("INTERVAL", INTERVAL);
 console.log("STATES", STATES);
 console.log("FRAMES", FRAMES);
+var WALL_UNKNOWN = 0;
 var WALL_FLOOR = 1;
 var WALL_BLOCK0 = 2;
 var WALL_BLOCK_MAX = WALL_BLOCK0 + 8;
@@ -424,11 +460,11 @@ console.log("WALL_TELEPORT0", WALL_TELEPORT0);
 console.log("WALL_BLOCK0", WALL_BLOCK0);
 console.log("WALL_WINDOW", WALL_WINDOW);
 var CELL_FLOOR = 1;
-var CELL_PLAYER = 2;
 var CELL_EXIT = 3;
 var CELL_KEY0 = 4;
 var CELL_KEY_MAX = CELL_KEY0 + 5;
 var CELL_CLOAK = CELL_KEY_MAX;
+var CELL_PLAYER = 128;
 var ACTION_CHANGE = 0;
 var ACTION_MOVE = 1;
 function is_block(cell) {
@@ -487,8 +523,8 @@ function set_cell_(map, x, y$0, what) {
   return prev;
 }
 
-function set_observed_wall(world, time, x, y$0, wall_dir, what) {
-  var index = time * MAP_SIZE + (y$0 << W_SHIFT | x) + MAP_SECTION_SIZE + MAP_SECTION_SIZE * wall_dir;
+function set_observed_wall(world, time$0, x, y$0, wall_dir, what) {
+  var index = time$0 * MAP_SIZE + (y$0 << W_SHIFT | x) + MAP_SECTION_SIZE + MAP_SECTION_SIZE * wall_dir;
   var prev = world.observed_map[index];
   if (what === 0) {
     return prev;
@@ -500,13 +536,13 @@ function set_observed_wall(world, time, x, y$0, wall_dir, what) {
   return prev;
 }
 
-function get_observed_wall(world, time, x, y$0, wall_dir) {
-  var index = time * MAP_SIZE + (y$0 << W_SHIFT | x) + MAP_SECTION_SIZE + MAP_SECTION_SIZE * wall_dir;
+function get_observed_wall(world, time$0, x, y$0, wall_dir) {
+  var index = time$0 * MAP_SIZE + (y$0 << W_SHIFT | x) + MAP_SECTION_SIZE + MAP_SECTION_SIZE * wall_dir;
   return world.observed_map[index];
 }
 
-function set_observed_cell(world, time, x, y$0, what) {
-  var index = time * MAP_SIZE + (y$0 << W_SHIFT | x);
+function set_observed_cell(world, time$0, x, y$0, what) {
+  var index = time$0 * MAP_SIZE + (y$0 << W_SHIFT | x);
   var prev = world.observed_map[index];
   if (what === 0) {
     return prev;
@@ -518,8 +554,8 @@ function set_observed_cell(world, time, x, y$0, what) {
   return prev;
 }
 
-function get_observed_cell(world, time, x, y$0) {
-  var index = time * MAP_SIZE + (y$0 << W_SHIFT | x);
+function get_observed_cell(world, time$0, x, y$0) {
+  var index = time$0 * MAP_SIZE + (y$0 << W_SHIFT | x);
   return world.observed_map[index];
 }
 
@@ -537,6 +573,18 @@ function get_wall(map, [x, y$0], wall_dir) {
 
 function get_wall_(map, x, y$0, wall_dir) {
   return map[(y$0 << W_SHIFT | x) + MAP_SECTION_SIZE + MAP_SECTION_SIZE * wall_dir];
+}
+
+function get_wall_mirror_(map, x, y$0, wall_dir) {
+  return map[(x << W_SHIFT | y$0) + MAP_SECTION_SIZE + MAP_SECTION_SIZE * !wall_dir];
+}
+
+function get_wall_mirrorable_(map, x, y$0, wall_dir, mirror) {
+  if (mirror) {
+    return map[(x << W_SHIFT | y$0) + MAP_SECTION_SIZE + MAP_SECTION_SIZE * !wall_dir];
+  } else {
+    return map[(y$0 << W_SHIFT | x) + MAP_SECTION_SIZE + MAP_SECTION_SIZE * wall_dir];
+  }
 }
 
 function loc_from_coords([x, y$0]) {
@@ -564,9 +612,9 @@ function get_wall_loc(map, loc, wall_dir) {
 }
 
 function state_create() {
-  var self = {map: map_create(), visual: map_create(), options: {}, prev_switches: 0, switches: 0, prev_outputs: 0, outputs: 0};
+  var self = {map: map_create(), options: {}, prev_switches: 0, switches: 0, prev_outputs: 0, outputs: 0};
   self.options[WALL_TELEPORT0] = {};
-  self.options[WALL_TELEPORT0]["pos_diff"] = [-31, 0];
+  self.options[WALL_TELEPORT0]["pos_diff"] = [0, 0];
   self.options[WALL_TELEPORT0]["state_diff"] = -1;
   self.options[WALL_BLOCK0 + 1] = {};
   self.options[WALL_BLOCK0 + 1]["text"] = "OH HELLO";
@@ -585,27 +633,10 @@ function state_create() {
   return self;
 }
 
-function state_preprocess(state, frame, time) {
-  for (var i = 0;i < MAP_SIZE;++i) {
-    var cell = state.map[i];
-    if (is_teleport(cell)) {
-      var opt = state.options[cell & ~1];
-      var sign = cell & 1 ? -1 : 1;
-      var state_diff = sign * opt["state_diff"];
-      var new_time = time + state_diff * INTERVAL;
-      if (new_time >= FRAMES || new_time < 0) cell = WALL_BLOCK0;
-    } else if (is_door(cell)) {
-      var door_id = cell - WALL_DOOR0;
-      if (!(state.outputs & 1 << door_id)) cell = WALL_BLOCK0;
-    }
-    state.visual[i] = cell;
-  }
-  Object.values(frame.player_states).forEach(function(s) {
-    if (s.cloak_timer < 0) set_cell(state.visual, s.pos, CELL_PLAYER);
-  });
+function state_preprocess(state, frame, time$0) {
 }
 
-function state_update(state, frame, time) {
+function state_update(state, frame, time$0) {
   var current = frame.switches;
   var change_on = ~state.prev_switches & current;
   var any_change = state.prev_switches !== current;
@@ -626,16 +657,18 @@ function time_in_state(world, s) {
 }
 
 function copy_to(from, to) {
-  if (from.constructor === Uint8Array) to = from.slice();
- else if (Array.isArray(from)) {
+  if (Array.isArray(from)) {
     to = to || [];
     to.length = from.length;
     var i = 0;
     for (;i < from.length;) to[i] = copy_to(from[i], to[i]), i += 1;
-  } else if (typeof(from) === "object") to = to || {}, Object.keys(from).forEach(function(k) {
-    to[k] = copy_to(from[k], to[k]);
-  });
+  } else if (typeof(from) === "object") {
+    if (from.constructor === Uint8Array) to = from.slice();
  else {
+      to = to || {};
+      for (var k in from) to[k] = copy_to(from[k], to[k]);
+    }
+  } else {
     to = from;
   }
   return to;
@@ -656,13 +689,13 @@ function world_reset(w) {
   w.conflicts = 0;
   w.current_state = 0;
   w.current_player = 0;
-  w.current_player_state = {aim: [1, 0], pos: [15.5, 15.5], cloak_timer: -1, inventory: []};
+  w.current_player_state = {aim: [1, 0], pos: [16.754003723147108, 27.054039267500432], cloak_timer: -1, inventory: []};
   w.visual = new Uint8Array(VISUAL_SIZE);
   w.states.push(clone(w.first_state));
-  var time = 0;
+  var time$0 = 0;
   for (var i = 1;i < STATES;++i) {
     var state = clone(w.states[w.states.length - 1]);
-    for (var j = 0;j < INTERVAL;++j) state_update(state, w.frames[time], time), time += 1;
+    for (var j = 0;j < INTERVAL;++j) state_update(state, w.frames[time$0], time$0), time$0 += 1;
     w.states.push(state);
   }
   console.log(w.states);
@@ -686,6 +719,306 @@ function seen_cell(world, visual_cell_id) {
   var prev = world.visual[index];
   world.visual[index] = 1;
   return prev;
+}
+
+function is_sweep_obstacle(wall) {
+  return is_wall(wall) || is_teleport(wall);
+}
+
+function set_observed_wall_2(world, mirror, x, y$0, wall_dir, wall) {
+  if (!mirror) set_observed_wall(world, current_player_time(world), x, y$0, wall_dir, WALL_BLOCK0);
+ else {
+    set_observed_wall(world, current_player_time(world), y$0, x, !wall_dir, WALL_BLOCK0);
+  }
+}
+
+function set_observed_cell_2(world, mirror, x, y$0, cell) {
+  if (!mirror) set_observed_cell(world, current_player_time(world), x, y$0, cell);
+ else {
+    set_observed_cell(world, current_player_time(world), y$0, x, cell);
+  }
+}
+
+function test_wall(world, s, s_visual, mirror, wall_x, wall_y, wall_dir, originx, originy, stepx, slope, renders) {
+  var parity = wall_dir ? Math.sign(slope) : stepx;
+  if (mirror) {
+    var tempx = wall_x;
+    var temporg = originx;
+    wall_x = wall_y;
+    wall_y = tempx;
+    originx = originy;
+    originy = temporg;
+    wall_dir = !wall_dir;
+  } else {
+  }
+  var cur_wall = get_wall_(s_visual, wall_x, wall_y, wall_dir);
+  set_observed_wall(world, current_player_time(world), wall_x, wall_y, wall_dir, cur_wall);
+  wall_tests += 1;
+  var r;
+  if (is_sweep_obstacle(cur_wall)) {
+    var wall_end_x = wall_x + wall_dir;
+    var wall_end_y = wall_y + !wall_dir;
+    var ax = wall_x - originx;
+    var ay = wall_y - originy;
+    var bx = wall_end_x - originx;
+    var by = wall_end_y - originy;
+    allocs += 1;
+    r = {fromx: ax, fromy: ay, tox: bx, toy: by, color: 4294967295, wall: cur_wall};
+    if (is_teleport(cur_wall)) {
+      r.color = 4294901760;
+      var opt = world.states[s].options[cur_wall & ~1];
+      var sign = (cur_wall & 1 ? -1 : 1) * parity;
+      var pos_diffx = sign * opt["pos_diff"][0];
+      var pos_diffy = sign * opt["pos_diff"][1];
+      var state_diff = sign * opt["state_diff"];
+      if (mirror) {
+        var temp = pos_diffx;
+        pos_diffx = pos_diffy;
+        pos_diffy = temp;
+      }
+      r.pos_diffx = pos_diffx;
+      r.pos_diffy = pos_diffy;
+      r.s = (s + STATES + state_diff) % STATES;
+      r.pass = true;
+    }
+    if (renders) {
+      var angled_visual_wall_id = Math.floor(ay) * (VISUAL_W * 2) + Math.floor(ax) * 2 + wall_dir;
+      if (!seen_wall(world, angled_visual_wall_id)) {
+        var renderer = cur_wall === WALL_WINDOW ? renders.sky : renders.lines;
+        renderer.push(r);
+        if (is_teleport(cur_wall)) renders.portal_texts.push(r);
+      }
+    }
+  }
+  return r;
+}
+
+function sweep5_emu(world, s, originx, originy, dirx, diry, max_len) {
+  var result = {};
+  var hit;
+  var emu_result = {};
+  if (Math.abs(dirx) > Math.abs(diry)) hit = cast_edge(result, false, false, world, s, world.states[s].map, false, originx, originy, originx | 0, originy | 0, Math.sign(dirx), diry / Math.abs(dirx), max_len);
+ else {
+    hit = cast_edge(result, false, false, world, s, world.states[s].map, true, originy, originx, originy | 0, originx | 0, Math.sign(diry), dirx / Math.abs(diry), max_len);
+    var t = result.hitx;
+    result.hitx = result.hity;
+    result.hity = t;
+  }
+  emu_result.blocked = hit && !hit.pass;
+  emu_result.end_s = result.s;
+  emu_result.end_pos = [result.hitx, result.hity];
+  emu_result.end_length = result.length;
+  emu_result.end_wall = hit ? hit.wall : WALL_FLOOR;
+  return emu_result;
+}
+
+function cast_edge(result, stop_on_hit, stop_on_vertical, world, s, s_visual, mirror, originx, originy, iposx, ipos1y, stepx, slope, limit, renders) {
+  var cur_wall = 0;
+  var wall_x;
+  var wall_y;
+  var piposx;
+  var piposy;
+  var north_south;
+  var hit;
+  var length;
+  var fact = Math.hypot(slope, 1);
+  var lim = 0;
+  var max_length = limit / fact;
+  for (;;) {
+    var dir_positivex = stepx >= 0 ? 1 : 0;
+    var dir_positivey = slope >= 0 ? 1 : 0;
+    var leapx = iposx + dir_positivex - originx;
+    var leapy = ipos1y + dir_positivey - originy;
+    var length_we = Math.abs(leapx);
+    var length_ns = leapy / slope;
+    north_south = length_ns < length_we;
+    piposx = iposx;
+    piposy = ipos1y;
+    lim += 1;
+    if (lim > 100) throw(no_sweep = true, "cast_edge timeout, " + stepx + ", " + slope);
+    if (north_south) wall_x = iposx, wall_y = ipos1y + dir_positivey, ipos1y += Math.sign(slope), length = length_ns;
+ else {
+      wall_x = iposx + dir_positivex;
+      wall_y = ipos1y;
+      iposx += stepx;
+      length = length_we;
+    }
+    if (stop_on_vertical && !north_south) {
+      break;
+    }
+    cur_wall = test_wall(world, s, s_visual, mirror, wall_x % 32, wall_y % 32, north_south, originx, originy, stepx, slope, renders);
+    if (length >= max_length) {
+      length = max_length;
+      iposx = piposx;
+      ipos1y = piposy;
+      break;
+    }
+    if (cur_wall) {
+      hit = cur_wall;
+      if (stop_on_hit || !cur_wall.pass) {
+        break;
+      }
+      var ipos2y = 0;
+      var ty = cur_wall;
+      if (ty) {
+        var pos_diffx = ty.pos_diffx;
+        var pos_diffy = ty.pos_diffy;
+        originx += pos_diffx;
+        originy += pos_diffy;
+        iposx += pos_diffx;
+        ipos1y += pos_diffy;
+        ipos2y += pos_diffy;
+        s = ty.s;
+        s_visual = world.states[s].map;
+      }
+    }
+  }
+  result.iposx = iposx;
+  result.iposy = ipos1y;
+  result.wall_x = wall_x;
+  result.wall_y = wall_y;
+  result.piposx = piposx;
+  result.piposy = piposy;
+  result.hitx = originx + stepx * length;
+  result.hity = originy + slope * length;
+  result.s = s;
+  result.north_south = north_south;
+  result.length = length * fact;
+  return hit;
+}
+
+var no_sweep = false;
+function assert(msg, condition) {
+  if (!condition) throw(no_sweep = true, "assert failed: " + msg);
+}
+
+var upper = {};
+var lower = {};
+function cast_beam(world, ty, mirror, s, s_visual, originx, originy, iposx, ipos1y, ipos2y, stepx, slope1, slope2, limit, renders) {
+  if (ty) {
+    var pos_diffx = ty.pos_diffx;
+    var pos_diffy = ty.pos_diffy;
+    originx += pos_diffx;
+    originy += pos_diffy;
+    iposx += pos_diffx;
+    ipos1y += pos_diffy;
+    ipos2y += pos_diffy;
+    s = ty.s;
+    s_visual = world.states[s].map;
+  }
+  if (world.offset % 60 === 0) {
+  }
+  var limit_sq = limit * limit;
+  var stepx_negative = stepx < 0 ? 1 : 0;
+  var upper_hit = cast_edge(upper, true, true, world, s, s_visual, mirror, originx, originy, iposx, ipos1y, stepx, slope1, limit, renders);
+  var lower_hit = cast_edge(lower, true, true, world, s, s_visual, mirror, originx, originy, iposx, ipos2y, stepx, slope2, limit, renders);
+  var upper_piposy = upper.piposy;
+  var upper_iposx = upper.iposx;
+  var upper_iposy = upper.iposy;
+  var upper_hitx = upper.hitx;
+  var upper_hity = upper.hity;
+  var lower_piposy = lower.piposy;
+  var lower_iposx = lower.iposx;
+  var lower_iposy = lower.iposy;
+  var lower_hitx = lower.hitx;
+  var lower_hity = lower.hity;
+  var x = iposx + stepx;
+  var y1 = Math.max(upper_iposy, upper_piposy);
+  var y2 = Math.min(lower_iposy, lower_piposy);
+  if (upper_hit) {
+    var w = upper_hit;
+    if (w.pass && upper_iposy < y1) {
+      var cut_x = x + stepx_negative;
+      if (lower_hit && lower_iposy < y1) cut_x = stepx * Math.min(stepx * cut_x, stepx * lower_hitx);
+      var new_slope2 = (y1 - originy) / Math.abs(cut_x - originx);
+      cast_beam(world, w, mirror, s, s_visual, originx, originy, upper_iposx, upper_iposy, upper_iposy, stepx, slope1, new_slope2, limit, renders);
+    }
+  }
+  if (lower_hit) {
+    var w = lower_hit;
+    if (w.pass && lower_iposy > y2) {
+      var cut_x = x + stepx_negative;
+      if (upper_hit && upper_iposy > y2) cut_x = stepx * Math.min(stepx * cut_x, stepx * upper_hitx);
+      var new_slope1 = (y2 + 1 - originy) / Math.abs(cut_x - originx);
+      cast_beam(world, w, mirror, s, s_visual, originx, originy, lower_iposx, lower_iposy, lower_iposy, stepx, new_slope1, slope2, limit, renders);
+    }
+  }
+  var beginy = y1;
+  var rangety;
+  var cur_obstacle = false;
+  var wallty = {pass: false};
+  var time$0 = time_in_state(world, s);
+  for (var y$0 = Math.min(y1, ipos1y);y$0 < Math.max(y2, ipos2y) + 1;++y$0) {
+    var local_originx = mirror ? originy : originx;
+    var local_originy = mirror ? originx : originy;
+    var local_y = mirror ? iposx : y$0;
+    var local_x = mirror ? y$0 : iposx;
+    var cur_cell = get_cell_(s_visual, local_x, local_y);
+    if (is_key(cur_cell)) renders.objects.push({x: local_x + 0.5 - local_originx, y: local_y + 0.5 - local_originy, color: 4278255615});
+ else if (cur_cell === CELL_EXIT) renders.objects.push({x: local_x + 0.5 - local_originx, y: local_y + 0.5 - local_originy, color: 4294967040});
+ else if (cur_cell === CELL_CLOAK) renders.objects.push({x: local_x + 0.5 - local_originx, y: local_y + 0.5 - local_originy, color: 4289374890});
+    var player_states = world.frames[time$0].player_states;
+    for (var k in player_states) {
+      var p = player_states[k];
+      if (local_x === (p.pos[0] | 0) && local_y === (p.pos[1] | 0) && p.cloak_timer < 0) renders.lines.push({fromx: p.pos[0] - local_originx, fromy: p.pos[1] - local_originy, tox: p.pos[0] + p.aim[0] - local_originx, toy: p.pos[1] + p.aim[1] - local_originy, color: 4278190335}), cur_cell |= CELL_PLAYER;
+    }
+    set_observed_cell(world, time$0, local_x, local_y, cur_cell);
+  }
+  for (var y$0 = y1;y$0 < y2 + 2;++y$0) {
+    var next;
+    var next_obstacle;
+    var cut = y$0 === y2 + 1;
+    if (!cut) {
+      var xdiff = x + stepx_negative - originx;
+      var ydiff1 = y$0 - originy;
+      var ydiff2 = y$0 + 1 - originy;
+      var xdiff_sq = xdiff * xdiff;
+      var dist1_sq = xdiff_sq + ydiff1 * ydiff1;
+      var dist2_sq = xdiff_sq + ydiff2 * ydiff2;
+      if (dist1_sq > limit_sq && dist2_sq > limit_sq) next = wallty;
+ else {
+        next = test_wall(world, s, s_visual, mirror, x + stepx_negative, y$0, false, originx, originy, stepx, 0, renders);
+      }
+      cut = !!next || cur_obstacle;
+      if (!cut && y$0 !== y1) cut = !!test_wall(world, s, s_visual, mirror, x, y$0, true, originx, originy, 0, 0);
+    }
+    if (cut) {
+      var endy = y$0;
+      if (world.offset % 60 === 0) {
+      }
+      if (beginy < endy && (!rangety || rangety.pass)) {
+        var new_dir1x = x + stepx_negative - originx;
+        var new_dir1y = Math.max(beginy, upper_hity) - originy;
+        var new_dir2x = x + stepx_negative - originx;
+        var new_dir2y = Math.min(endy, lower_hity) - originy;
+        if (new_dir1y < new_dir2y) {
+          var new_slope1 = new_dir1y / Math.abs(new_dir1x);
+          var new_slope2 = new_dir2y / Math.abs(new_dir2x);
+          cast_beam(world, rangety, mirror, s, s_visual, originx, originy, x, beginy, endy - 1, stepx, new_slope1, new_slope2, limit, renders);
+        }
+      }
+      beginy = y$0;
+      rangety = next;
+    }
+    cur_obstacle = !!next;
+  }
+}
+
+function sweep6(world, mirror, s, originx, originy, dir1x, dir1y, dir2x, dir2y, max_len, renders) {
+  if (no_sweep) {
+    return void 0;
+  }
+  var iposx = originx | 0;
+  var iposy = originy | 0;
+  var s_visual = world.states[s].map;
+  var limit = 64;
+  var k = 0;
+  var thresh = 0.01;
+  if (dir1x >= thresh && dir2x >= thresh) cast_beam(world, undefined, mirror, s, s_visual, originx, originy, iposx, iposy, iposy, 1, dir1y / Math.abs(dir1x), dir2y / Math.abs(dir2x), limit, renders), k = 1;
+ else if (dir1x <= -thresh && dir2x <= -thresh) cast_beam(world, undefined, mirror, s, s_visual, originx, originy, iposx, iposy, iposy, -1, dir2y / Math.abs(dir2x), dir1y / Math.abs(dir1x), limit, renders), k = 2;
+ else if (dir1y >= thresh && dir2y >= thresh) cast_beam(world, undefined, !mirror, s, s_visual, originy, originx, iposy, iposx, iposx, 1, dir2x / Math.abs(dir2y), dir1x / Math.abs(dir1y), limit, renders), k = 3;
+ else if (dir1y <= thresh && dir2y <= thresh) cast_beam(world, undefined, !mirror, s, s_visual, originy, originx, iposy, iposx, iposx, -1, dir1x / Math.abs(dir1y), dir2x / Math.abs(dir2y), limit, renders), k = 4;
+  if (world.offset % 60 === 0) console.log(originx, originy, dir1x, dir1y, dir2x, dir2y, k);
 }
 
 function sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
@@ -713,8 +1046,8 @@ function sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
     if (renders && !seen_cell(world, visual_cell_id)) {
       cell_render += 1;
       var cur_cell = get_cell_(s_visual, iposx, iposy);
-      var time = time_in_state(world, s);
-      if (cur_cell === CELL_PLAYER) Object.values(world.frames[time].player_states).forEach(function(p) {
+      var time$0 = time_in_state(world, s);
+      if (cur_cell === CELL_PLAYER) Object.values(world.frames[time$0].player_states).forEach(function(p) {
         if (iposx === (p.pos[0] | 0) && iposy === (p.pos[1] | 0) && p.cloak_timer < 0) renders.lines.push({fromx: p.pos[0] - originx, fromy: p.pos[1] - originy, tox: p.pos[0] + p.aim[0] - originx, toy: p.pos[1] + p.aim[1] - originy, color: 4278190335});
       });
  else if (is_key(cur_cell)) {
@@ -723,11 +1056,8 @@ function sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
       } else if (cur_cell === CELL_EXIT) {
         var p = [iposx + 0.5, iposy + 0.5];
         renders.lines.push({fromx: iposx - originx, fromy: iposy + 0.5 - originy, tox: iposx + 1 - originx, toy: iposy + 0.5 - originy, color: 4294967040});
-      } else if (cur_cell === CELL_CLOAK) {
-        var p = [iposx + 0.5, iposy + 0.5];
-        renders.lines.push({fromx: iposx - originx, fromy: iposy + 0.5 - originy, tox: iposx + 1 - originx, toy: iposy + 0.5 - originy, color: 4289374890});
-      }
-      set_observed_cell(world, time, iposx, iposy, cur_cell);
+      } else if (cur_cell === CELL_CLOAK) renders.objects.push({x: iposx + 0.5, y: iposy + 0.5, color: 4289374890});
+      set_observed_cell(world, time$0, iposx, iposy, cur_cell);
     }
     var dir_positivex = dirx >= 0 ? 1 : 0;
     var dir_positivey = diry >= 0 ? 1 : 0;
@@ -775,8 +1105,8 @@ function sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
         renderer.push({fromx: ax, fromy: ay, tox: bx, toy: by, color: is_switch(cur_wall) ? 4294967040 : 4294967295, s: s});
         var opt = world.states[s].options[cur_wall];
         if (opt && opt["text"]) renders.portal_texts.push({fromx: ax, fromy: ay, tox: bx, toy: by, color: 4294901760, text: opt["text"]});
-        var time = time_in_state(world, s);
-        set_observed_wall(world, time, div_start_x, div_start_y, north_south, cur_wall);
+        var time$0 = time_in_state(world, s);
+        set_observed_wall(world, time$0, div_start_x, div_start_y, north_south, cur_wall);
       }
       break;
     } else if (is_teleport(cur_wall)) {
@@ -784,7 +1114,7 @@ function sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
       var div_endx = div_start_x + north_south;
       var div_endy = div_start_y + !north_south;
       var opt = world.states[s].options[cur_wall & ~1];
-      var sign = cur_wall & 1 ? -1 : 1;
+      var sign = (cur_wall & 1 ? -1 : 1) * (north_south ? Math.sign(diry) : Math.sign(dirx));
       var pos_diffx = sign * opt["pos_diff"][0];
       var pos_diffy = sign * opt["pos_diff"][1];
       var state_diff = sign * opt["state_diff"];
@@ -811,8 +1141,8 @@ function sweep5(world, s, originx, originy, dirx, diry, max_len, renders) {
       originy += pos_diffy;
       var linedx = dirx * length;
       var linedy = diry * length;
-      originx -= originx + linedx;
-      originy -= originy + linedy;
+      originx = originx + linedx - linedx;
+      originy = originy + linedy - linedy;
       iposx = iposx + (dirx >= 0 ? 1 : 0);
       iposy = iposy + (diry >= 0 ? 1 : 0);
       s = (s + STATES + state_diff) % STATES;
@@ -826,16 +1156,11 @@ function sweep(world, origin, aim, renders) {
   world.visual.fill(0);
   var fov = 1;
   var fov_vec = [Math.cos(fov / 2), Math.sin(fov / 2)];
-  var a = vrotate(aim, [fov_vec[0], -fov_vec[1]]);
-  var b = vsub2(vrotate(aim, fov_vec), a);
+  var first = vrotate(aim, [fov_vec[0], -fov_vec[1]]);
+  var second = vrotate(aim, fov_vec);
+  var diff = vsub2(second, first);
   var i = 0;
-  var rays = 512;
-  for (;i < rays;) {
-    var m = vadd2(a, vmul2(b, i / rays));
-    m = vmul2(m, 1 / Math.hypot(m[0], m[1]));
-    sweep5(world, world.current_state, origin[0], origin[1], m[0], m[1], 64, renders);
-    i += 1;
-  }
+  sweep6(world, false, world.current_state, origin[0], origin[1], first[0], first[1], second[0], second[1], 64, renders);
 }
 
 function current_player_time(world) {
@@ -845,9 +1170,9 @@ function current_player_time(world) {
 function world_update(world, action, renders, paused$0) {
   if (!paused$0) {
     for (var s = 0;s < STATES;++s) {
-      var time = time_in_state(world, s);
-      state_update(world.states[s], world.frames[time], time);
-      if (time === FRAMES - 1) {
+      var time$0 = time_in_state(world, s);
+      state_update(world.states[s], world.frames[time$0], time$0);
+      if (time$0 === FRAMES - 1) {
         if (world.current_state === s) world.current_player += 1;
         world.states[s] = clone(world.first_state);
       }
@@ -856,7 +1181,7 @@ function world_update(world, action, renders, paused$0) {
   var switch_ons = 0;
   world.current_player_state.aim = action.aim;
   if (action.act) {
-    var act_result = sweep5(world, world.current_state, world.current_player_state.pos[0], world.current_player_state.pos[1], action.aim[0], action.aim[1], 1);
+    var act_result = sweep5_emu(world, world.current_state, world.current_player_state.pos[0], world.current_player_state.pos[1], action.aim[0], action.aim[1], 1);
     if (act_result.blocked) {
       if (is_switch(act_result.end_wall)) {
         var opt = world.states[world.current_state].options[act_result.end_wall];
@@ -878,11 +1203,11 @@ function world_update(world, action, renders, paused$0) {
   if (action.walk[0] || action.walk[1]) {
     var pi = world.current_player_state.pos;
     var walk_dir = vnormalize2(action.walk);
-    var result = sweep5(world, world.current_state, world.current_player_state.pos[0], world.current_player_state.pos[1], walk_dir[0], walk_dir[1], WALK_SPEED);
+    var result = sweep5_emu(world, world.current_state, world.current_player_state.pos[0], world.current_player_state.pos[1], walk_dir[0], walk_dir[1], WALK_SPEED);
     if (!result.blocked) {
-      var time = current_player_time(world);
-      if (time_in_state(world, result.end_s) < time) console.log("going back to", time_in_state(world, result.end_s)), world.current_player += 1;
-      if (time_in_state(world, result.end_s) !== time) world.current_player += 1;
+      var time$0 = current_player_time(world);
+      if (time_in_state(world, result.end_s) < time$0) console.log("going back to", time_in_state(world, result.end_s)), world.current_player += 1;
+      if (time_in_state(world, result.end_s) !== time$0) world.current_player += 1;
       world.current_state = result.end_s;
       world.current_player_state.pos = result.end_pos;
     }
@@ -891,7 +1216,7 @@ function world_update(world, action, renders, paused$0) {
     var min_dir;
     for (;ang < Math.PI * 2;) {
       var dir = [Math.cos(ang), Math.sin(ang)];
-      var res = sweep5(world, world.current_state, world.current_player_state.pos[0], world.current_player_state.pos[1], dir[0], dir[1], PLAYER_RADIUS);
+      var res = sweep5_emu(world, world.current_state, world.current_player_state.pos[0], world.current_player_state.pos[1], dir[0], dir[1], PLAYER_RADIUS);
       if (res.blocked && res.end_length < min_dist) min_dist = res.end_length, min_dir = dir;
       ang += 0.2;
     }
@@ -902,11 +1227,11 @@ function world_update(world, action, renders, paused$0) {
       if (world.reset_on < 0) world.reset_on = world.offset + RESET_TIMER;
     } else if (on_cell === CELL_CLOAK) world.current_player_state.cloak_timer = CLOAK_TIME;
  else if (is_pickable(on_cell)) {
-      var time = current_player_time(world);
+      var time$0 = current_player_time(world);
       world.current_player_state.inventory[on_cell] |= 1;
       var to = CELL_FLOOR;
       set_loc(world.states[world.current_state].map, at, to);
-      world.frames[time].actions.push([ACTION_CHANGE, at, to]);
+      world.frames[time$0].actions.push([ACTION_CHANGE, at, to]);
       console.log("current inventory:", world.current_player_state.inventory);
     }
   }
@@ -918,12 +1243,12 @@ function world_update(world, action, renders, paused$0) {
   var origin = world.current_player_state.pos;
   var aim = world.current_player_state.aim;
   for (var s = 0;s < STATES;++s) {
-    var time = time_in_state(world, s);
-    state_preprocess(world.states[s], world.frames[time], time);
+    var time$0 = time_in_state(world, s);
+    state_preprocess(world.states[s], world.frames[time$0], time$0);
   }
   var prev_conflicts = world.conflicts;
   sweep(world, origin, aim, renders);
-  if (world.conflicts !== prev_conflicts && !paused$0) {
+  if (false) {
     if (get_observed_cell(world, now, world.current_player_state.pos[0] | 0, world.current_player_state.pos[1] | 0) !== CELL_PLAYER) {
       for (var i = 0;i < 20;++i) {
         world.current_player_state.pos = [Math.random() * 31, Math.random() * 31];
@@ -940,10 +1265,12 @@ function world_update(world, action, renders, paused$0) {
   if (!paused$0 && now % SECOND === 0) {
     var seconds = now / SECOND;
     console.log(seconds / 60 | 0, seconds % 60, "player ", world.current_player);
-    console.log("renders:", wall_render, cell_render, ray_steps);
+    console.log("renders:", wall_tests, allocs);
+    wall_tests = 0;
     wall_render = 0;
     cell_render = 0;
     ray_steps = 0;
+    allocs = 0;
   }
 }
 
@@ -1000,7 +1327,7 @@ function start(world) {
   var editor_selected_cell = CELL_FLOOR;
   var last_selected_key = CELL_KEY0;
   function to_json(st) {
-    return JSON.stringify({version: 2, map: world.first_state.map, options: world.first_state.options});
+    return JSON.stringify({version: 2, map: [].slice.call(world.first_state.map), options: world.first_state.options});
   }
 
   function to_binary(st) {
@@ -1029,6 +1356,8 @@ function start(world) {
       st.options = options;
       console.log(options);
       console.log(map.map);
+    } else {
+      console.log("saved not found or corrupted", map);
     }
   }
 
@@ -1037,6 +1366,7 @@ function start(world) {
     if (data) from_json(data, world.first_state);
   }
 
+  load_map();
   world_reset(world);
   function save_map() {
     var data = to_json(world.first_state);
@@ -1079,7 +1409,6 @@ function start(world) {
   function empty_world() {
     world.first_state = state_create();
     world_reset(world);
-    paused = true;
   }
 
   function load_map_from_disk(text) {
@@ -1217,6 +1546,8 @@ function start(world) {
         var st = world.first_state;
         var down = get_wall(st.map, [mx, my], false);
         var right = get_wall(st.map, [mx, my], true);
+        if (get_observed_wall(world, current_player_time(world), mx, my, false) !== 0) down = get_observed_wall(world, current_player_time(world), mx, my, false);
+        if (get_observed_wall(world, current_player_time(world), mx, my, true) !== 0) right = get_observed_wall(world, current_player_time(world), mx, my, true);
         var cell = get_cell(st.map, [mx, my]);
         var width = 0.05;
         var obs = get_observed_cell(world, now, mx, my);
@@ -1526,7 +1857,7 @@ function startGame() {
   var world = world_create();
   var keys = {};
   var audio;
-  var aim = [1, 0];
+  var aim = [0, 1];
   var aimv = [1, 0];
   window.onkeydown = function(ev) {
     keys[ev.keyCode] = 1;
@@ -1572,7 +1903,7 @@ function startGame() {
       audio = new AudioContext();
       var bufSize = 16384;
       var scriptProc = audio.createScriptProcessor(bufSize, 0, 2);
-      var time = 0;
+      var time$0 = 0;
       var tick = 0;
       var start$0 = 44100 * 4;
       var beep = Array(44100 * 4).fill(0);
@@ -1664,6 +1995,7 @@ function startGame() {
     var step = 100;
     var bottom = sign * -height / 2 - (sign < 0 ? height : 0);
     var top = sign * height / 2 - (sign < 0 ? height : 0);
+    gl$0.uniform1f(gl$0.getUniformLocation(skyShader, "n"), time);
     renders.sky.forEach(function(r) {
       var x = r.fromx * step;
       var z = r.fromy * step;
@@ -1685,6 +2017,12 @@ function startGame() {
       color(r.color);
       wall3d(whiteTex, x, z, x2, z2, bottom, top, 0, 0, 1, 1);
     });
+    renders.objects.forEach(function(r) {
+      var x = r.x * step;
+      var z = r.y * step;
+      color(r.color);
+      prism(whiteTex, x, z, bottom, 0.2 * step, 0.2 * step, (top - bottom) / 2);
+    });
     flush();
     gl$0.depthMask(1);
     activateShader(imgShader);
@@ -1695,7 +2033,16 @@ function startGame() {
       var z2 = r.toy * step;
       color(4278255360);
       var textdir = vnormalize2([x2 - x, z2 - z]);
-      drawText(fontBits, whiteTex, r.text || "THING", z, top, x, textdir[1], textdir[0], sign, 10 / 3);
+      var time_at = TIME_IN_SECONDS - time_in_state(world, r.s) / SECOND | 0;
+      var a = time_at % 10;
+      time_at = time_at / 10 | 0;
+      var b = time_at % 6;
+      time_at = time_at / 6 | 0;
+      var c = time_at % 10;
+      time_at = time_at / 10 | 0;
+      var d = time_at % 10;
+      var time_text = String.fromCharCode(d + 48, c + 48, 58, b + 48, a + 48);
+      drawText(fontBits, whiteTex, r.text || time_text, z, top, x, textdir[1], textdir[0], sign, 10 / 3);
     });
     flush();
   }
@@ -1704,29 +2051,22 @@ function startGame() {
   function update() {
     window.requestAnimationFrame(function(currentTime) {
       update();
+      time += 1 / 60;
       var walk = [0, 0];
       if (keys[71]) walk = vadd2(walk, aim);
  else if (keys[83]) walk = vsub2(walk, aim);
       if (keys[68]) walk = vadd2(walk, [aim[1], -aim[0]]);
  else if (keys[84]) walk = vsub2(walk, [aim[1], -aim[0]]);
-      if (currentTime < nextFrame) {
-        return void 0;
+      if (false) {
+        if (currentTime < nextFrame) {
+          return void 0;
+        }
+        nextFrame = currentTime + 16.6;
       }
-      nextFrame = currentTime + 16.6;
       var renders;
       var speed = keys[16] ? 5 : 1;
-      for (var i = 0;i < speed;++i) renders = {lines: [], sky: [], portal_texts: []}, world_update(world, {aim: aim, walk: walk, act: keys[81]}, renders, paused);
-      renders.lines.sort(function(a, b) {
-        var len_a = a.fromx * a.fromx + a.fromy * a.fromy;
-        var len_b = b.fromx * b.fromx + b.fromy * b.fromy;
-        if (len_a < len_b) {
-          return -1;
-        } else if (len_a === len_b) {
-          return 0;
-        } else {
-          return 1;
-        }
-      });
+      for (var i = 0;i < speed;++i) renders = {lines: [], sky: [], portal_texts: [], objects: []}, world_update(world, {aim: aim, walk: walk, act: keys[81]}, renders, paused);
+      renders.lines.reverse();
       if (!fb) canvas_w = canvas.width = window.innerWidth, canvas_h = canvas.height = window.innerHeight, fb = createFramebufferTexture(canvas_w, canvas_h);
  else if (window.innerWidth !== canvas_w || window.innerHeight !== canvas_h) canvas_w = canvas.width = window.innerWidth, canvas_h = canvas.height = window.innerHeight, deleteFramebufferTexture(fb), fb = createFramebufferTexture(canvas_w, canvas_h);
       gl$0.viewport(0, 0, gl$0.drawingBufferWidth, gl$0.drawingBufferHeight);

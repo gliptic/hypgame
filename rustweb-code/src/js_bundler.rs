@@ -767,6 +767,16 @@ var wasm = new WebAssembly.Instance(m, { i: {"#);
                 self.buf.push_str(") ");
                 self.stmts_to_js(body, true, PREC_MAX)
             }
+            JsAst::ForIn { obj, var, body } => {
+                self.buf.push_str("for (");
+                self.buf.push_str("var ");
+                let name = &self.module_infos[self.current_module].locals[*var as usize].name;
+                self.buf.push_str(name);
+                self.buf.push_str(" in ");
+                self.to_js(obj, PREC_MAX, true);
+                self.buf.push_str(") ");
+                self.stmts_to_js(body, true, PREC_MAX)
+            }
             JsAst::Loop { body } => {
                 self.buf.push_str("for (;;) ");
                 self.stmts_to_js(body, true, PREC_MAX)

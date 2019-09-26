@@ -22,16 +22,9 @@ fn main() {
 
     'build_loop: loop {
         println!("building..");
-        match build(&args[1], &args[2], &args[3], &args[4]) {
-            Ok(d) => {
-                deps = d;
-            },
-            Err(d) => {
-                if deps.len() == 0 {
-                    // Set dependencies if we don't have any
-                    deps = d;
-                }
-            }
+        deps.clear();
+        if let Err(_) = build(&args[1], &args[2], &args[3], &args[4], &mut deps) {
+            println!("build failed");
         }
 
         for d in &deps {
@@ -82,7 +75,7 @@ fn main() {
 }
 
 type DepSet = HashSet<PathBuf>;
-type BuildResult = Result<DepSet, DepSet>; //Vec<rustweb_code::hyp::ParseError>>;
+type BuildResult = Result<(), ()>; //Vec<rustweb_code::hyp::ParseError>>;
 type HypModuleVec = Vec<(String, hyp::Module, Vec<u32>)>;
 
 fn parse_modules(root_in: &str, deps: &mut DepSet)
@@ -97,7 +90,7 @@ fn parse_modules(root_in: &str, deps: &mut DepSet)
         let mut to_read_index = 0;
 
         to_read.push_front((hyp::Attr::None, root.clone()));
-        have_read.insert(root, to_read_index);
+        have_read.insert(root.canonicalize().map_err(|_| ())?, to_read_index);
         to_read_index += 1;
 
         while let Some((attr, path)) = to_read.pop_front() {
@@ -105,9 +98,12 @@ fn parse_modules(root_in: &str, deps: &mut DepSet)
             deps.insert(canonicalize(&path).unwrap());
 
             let mut data = std::fs::read(&path).unwrap();
+            println!("read {:?}", &path);
+            
             let hyp_module;
             if attr == hyp::Attr::None {
                 data.push(0);
+                
 
                 let mut parser = hyp::parser::Parser::new(data, path.clone());
                 parser.next();
@@ -149,17 +145,20 @@ fn parse_modules(root_in: &str, deps: &mut DepSet)
                 } else {
                     subpath.push(&rel);
                 }
-                if !rel.contains(".") {
+                if subpath.extension().is_none() {
                     subpath.set_extension("hyp");
                 }
 
-                if !have_read.contains_key(&subpath) {
-                    have_read.insert(subpath.clone(), to_read_index);
+                let key = subpath.canonicalize().map_err(|_| ())?;
+                println!("importing {:?}", &key);
+
+                if !have_read.contains_key(&key) {
+                    have_read.insert(key, to_read_index);
                     import_map.push(to_read_index);
                     to_read.push_back((*attr, subpath));
                     to_read_index += 1;
                 } else {
-                    let index = *have_read.get(&subpath).unwrap();
+                    let index = *have_read.get(&key).unwrap();
                     import_map.push(index);
                 }
             }
@@ -187,7 +186,7 @@ fn bundle_js(hyp_modules: HypModuleVec, debug: bool) -> String {
     }
 
     for i in 0..module_infos.len() {
-        let mut resolver = hyp::resolver::Resolver::new(i, &mut module_infos, debug);
+        let mut resolver = hyp::resolver::Resolver::new(i, &mut module_infos, &[], debug);
         resolver.resolve(&mut module_lambdas[i]);
 
         if resolver.errors.len() > 0 {
@@ -207,17 +206,17 @@ fn bundle_js(hyp_modules: HypModuleVec, debug: bool) -> String {
     bundler.buf
 }
 
-fn build(root_in: &str, js_out: &str, js_min_out: &str, zip_min_out: &str) -> BuildResult {
+fn build(root_in: &str, js_out: &str, js_min_out: &str, zip_min_out: &str, deps: &mut DepSet) -> BuildResult {
 
-    let mut deps = HashSet::new();
+    //let mut deps = HashSet::new();
 
     use rustweb_code::{
         hyp_to_js, hyp_to_glsl,
         js_bundler, glsl_bundler};
 
-    let hyp_modules = match parse_modules(root_in, &mut deps) {
+    let hyp_modules = match parse_modules(root_in, deps) {
         Ok(m) => m,
-        Err(_) => return Err(deps)
+        Err(_) => return Err(())
     };
 
     let debug_js = &bundle_js(hyp_modules.clone(), true);
@@ -265,5 +264,5 @@ fn build(root_in: &str, js_out: &str, js_min_out: &str, zip_min_out: &str) -> Bu
         println!("zip size: {}", w.stream_len().unwrap());
     }
 
-    Ok(deps)
+    Ok(())
 }

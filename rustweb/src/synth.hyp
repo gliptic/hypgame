@@ -75,7 +75,7 @@ fn createNote(instr, n, rowLen) {
     var j = 0
     var j2 = 0
     while j < attack + sustain + release {
-        if (j2 >= 0) {
+        if j2 >= 0 {
             # Switch arpeggio note.
             arp := (arp >> 8) | ((arp & 255) << 4)
             j2 -= arpInterval
@@ -87,15 +87,15 @@ fn createNote(instr, n, rowLen) {
 
         # Envelope
         var e = 1
-        if (j < attack) {
+        if j < attack {
             e := j / attack
-        } else if (j >= attack + sustain) {
+        } elseif j >= attack + sustain {
             e -= (j - attack - sustain) * releaseInv
         }
 
         # Oscillator 1
         var t = o1t
-        if (o1xenv) {
+        if o1xenv {
             t *= e * e;
         }
         c1 += t
@@ -103,14 +103,14 @@ fn createNote(instr, n, rowLen) {
 
         # Oscillator 2
         t := o2t
-        if (o2xenv) {
+        if o2xenv {
             t *= e * e
         }
         c2 += t
         rsample += osc2(c2) * o2vol
 
         # Noise oscillator
-        if (noiseVol) {
+        if noiseVol {
             rsample += (2 * Math.random() - 1) * noiseVol
         }
 
@@ -183,18 +183,18 @@ pub fn generate() {
     var noteCache = []
 
     # Patterns
-    for p in 0..mLastRow + 1 {
+    for (0..mLastRow + 1) \p {
         cp := instr.p[p]
 
         # Pattern rows
-        for row in 0..patternLen {
+        for (0..patternLen) \row {
             # Execute effect command.
             var cmdNo = if cp { instr.c[cp - 1].f[row] } else { 0 }
-            if (cmdNo) {
+            if cmdNo {
                 instr.i[cmdNo - 1] := instr.c[cp - 1].f[row + patternLen] || 0
 
                 # Clear the note cache since the instrument has changed.
-                if (cmdNo < 16) {
+                if cmdNo < 16 {
                     noteCache := []
                 }
             }
@@ -218,10 +218,10 @@ pub fn generate() {
             rowStartSample := (p * patternLen + row) * rowLen
 
             # Generate notes for this pattern row
-            for col in 0..4 {
+            for (0..4) \col {
                 n := if cp { instr.c[cp - 1].n[row + col * patternLen] } else { 0 }
-                if (n) {
-                    if (!noteCache[n]) {
+                if n {
+                    if !noteCache[n] {
                         noteCache[n] := createNote(instr, n, rowLen)
                     }
 
@@ -245,10 +245,10 @@ pub fn generate() {
                 rsample := chnBuf[k]
 
                 # We only do effects if we have some sound input
-                if (rsample || filterActive) {
+                if rsample || filterActive {
                     # State variable filter
                     f := fxFreq;
-                    if (fxLFO) {
+                    if fxLFO {
                         f *= oscLFO(lfoFreq * k) * lfoAmt + 0.5
                     }
                     f := 1.5 * Math.sin(f)
@@ -257,14 +257,14 @@ pub fn generate() {
                     band += f * high
                     rsample := if fxFilter == 3 {
                         band 
-                    } else if fxFilter == 1 {
+                    } elseif fxFilter == 1 {
                         high
                     } else {
                         low
                     }
 
                     # Distortion
-                    if (dist) {
+                    if dist {
                         rsample *= dist
                         rsample := if rsample < 1 {
                             if rsample > -1 {
@@ -293,7 +293,7 @@ pub fn generate() {
                 }
 
                 # Delay is always done, since it does not need sound input
-                if (k >= dly) {
+                if k >= dly {
                     # Left channel = left + right[-p] * t
                     lsample += chnBuf[k-dly+1] * dlyAmt
 
@@ -324,7 +324,7 @@ pub fn getData(t, n) {
     var i = 2 * Math.floor(t * 44100)
     var d = new Array(n)
 
-    for j in 0..2*n {
+    for (0..2*n) \j {
         var k = i + j
         d[j] := if t > 0 && k < mMixBuf.length { mMixBuf[k] / 32768 } else { 0 }
     }
@@ -332,7 +332,7 @@ pub fn getData(t, n) {
 }
 
 pub fn getDataTyped(i, n, d1, d2) {
-    for j in 0..n {
+    for (0..n) \j {
         var k = (i + j)*2
         d1[j] := if i > 0 && k < mMixBuf.length { mMixBuf[k] / 65536 } else { 0 }
         d2[j] := if i > 0 && k + 1 < mMixBuf.length { mMixBuf[k + 1] / 65536 } else { 0 }
